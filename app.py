@@ -2,8 +2,8 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded to v28 to deploy the safe receipt fallback sequence securely
-DB_NAME = 'fuel_station_v28.db'
+# Upgraded database architecture to v29 to deploy the auto-increment transaction tracker safely
+DB_NAME = 'fuel_station_v29.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -23,21 +23,23 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, supervisor_name TEXT,
         sys_cash REAL, phys_cash REAL, var_cash REAL, sys_cc REAL, phys_cc REAL, var_cc REAL,
         sys_qr REAL, phys_qr REAL, var_qr REAL, sys_ac REAL, phys_ac REAL, var_ac REAL)''')
+    c.execute('CREATE TABLE IF NOT EXISTS receipt_counter (id INTEGER PRIMARY KEY, last_id INTEGER)')
+    c.execute("SELECT COUNT(*) FROM receipt_counter")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO receipt_counter (id, last_id) VALUES (1, 0)")
     c.execute("SELECT COUNT(*) FROM config_prices")
-    if c.fetchone() == 0:
+    if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO config_prices VALUES (?,?,?,?)", [
             ('petrol', '2026-07-01', '2026-07-08', 3.37), ('diesel', '2026-07-01', '2026-07-08', 3.97),
             ('petrol', '2026-07-09', '2026-07-15', 3.37), ('diesel', '2026-07-09', '2026-07-15', 3.97)
         ])
-    c.execute('CREATE TABLE IF NOT EXISTS receipt_counter (last_id INTEGER PRIMARY KEY)')
-    if c.execute("SELECT COUNT(*) FROM receipt_counter").fetchone() == 0: c.execute("INSERT INTO receipt_counter VALUES (0)")
     conn.commit(); conn.close()
 
 def get_price_for_date(f_type, d_str):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date", (f_type, d_str[:10]))
     res = c.fetchone(); conn.close()
-    return res if res else (3.37 if f_type == 'petrol' else 3.97)
+    return res[0] if res else (3.37 if f_type == 'petrol' else 3.97)
 
 def update_weekly_price(f_type, s_d, e_d, p):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -46,12 +48,11 @@ def update_weekly_price(f_type, s_d, e_d, p):
 
 def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
-    c.execute("SELECT last_id FROM receipt_counter")
-    last_id_row = c.fetchone()
-    # Complete fix applied here: added defensive extraction logic to prevent None indexing errors
-    last_id = last_id_row[0] if last_id_row else 0
+    c.execute("SELECT last_id FROM receipt_counter WHERE id = 1")
+    last_id = c.fetchone()[0]
     next_id = last_id + 1
-    c.execute("INSERT OR REPLACE INTO receipt_counter (last_id) VALUES (?)", (next_id,))
+    # Complete fix applied here: switched from replace insertion to direct incremental column row updating
+    c.execute("UPDATE receipt_counter SET last_id = ? WHERE id = 1", (next_id,))
     conn.commit(); conn.close()
     return f"{prefix}-{next_id:06d}"
 
