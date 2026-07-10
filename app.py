@@ -4,16 +4,17 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_v4.db'
+# Switched to clean v5 database naming to dodge any leftover corrupted table records
+DB_NAME = 'fuel_station_v5.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Create specific custom pump tables manually 
+    # 1. Create specific custom pump tables manually - Typo completely removed from pump 6
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER独立 PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_7 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_1 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
@@ -21,7 +22,7 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_5 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_8 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     
-    # Price History tracking schema
+    # 2. Price History tracking schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS config_prices (
             fuel_type TEXT,
@@ -57,7 +58,7 @@ def get_price_for_date(fuel_type, date_str):
     res = cursor.fetchone()
     conn.close()
     if res:
-        return res[0]
+        return res
     return 3.37 if fuel_type == 'petrol' else 3.97
 
 def update_weekly_price(fuel_type, start_date, end_date, price):
@@ -75,7 +76,7 @@ def get_next_receipt_number(prefix):
     cursor = conn.cursor()
     cursor.execute("SELECT last_id FROM receipt_counter")
     last_id_row = cursor.fetchone()
-    last_id = last_id_row[0] if last_id_row else 0
+    last_id = last_id_row if last_id_row else 0
     next_id = last_id + 1
     cursor.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit()
@@ -88,7 +89,7 @@ def get_last_meter_reading(pump_no):
     try:
         cursor.execute(f"SELECT meter FROM petrol_pump_{pump_no} ORDER BY id DESC LIMIT 1")
         result = cursor.fetchone()
-        return result[0] if result else 0.0
+        return result if result else 0.0
     except:
         return 0.0
     finally:
@@ -107,7 +108,7 @@ active_market_petrol = get_price_for_date('petrol', current_date_str)
 active_market_diesel = get_price_for_date('diesel', current_date_str)
 
 # Clean Navigation Sidebar 
-st.sidebar.title("Commpass Navigation")
+st.sidebar.title("Compass Navigation")
 page = st.sidebar.radio("Go to:", ["🛒 Cashier Counter", "📊 Admin Reporting & Prices"])
 
 # ================= PAGE 1: CASHIER COUNTER =================
@@ -120,9 +121,9 @@ if page == "🛒 Cashier Counter":
         fuel_category = st.selectbox("Select Fuel Type", ["Petrol (RON95)", "Diesel"])
     with col_config2:
         if fuel_category == "Petrol (RON95)":
-            pump_selection = st.selectbox("Select Pump", [2, 4, 6, 7], format_func=lambda x: f"Pump {x}")
+            pump_selection = st.selectbox("Select Pump",, format_func=lambda x: f"Pump {x}")
         else:
-            pump_selection = st.selectbox("Select Pump", [1, 3, 5, 8], format_func=lambda x: f"Pump {x}")
+            pump_selection = st.selectbox("Select Pump",, format_func=lambda x: f"Pump {x}")
             
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
@@ -196,6 +197,3 @@ if page == "🛒 Cashier Counter":
 
 # ================= PAGE 2: ADMIN LOGS & PRICE SETUP =================
 else:
-    st.title("⚙️ Operations Configuration & History View")
-    
-    st.markdown("---")
