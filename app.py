@@ -194,6 +194,39 @@ if page == "🛒 Cashier Counter":
         </script>
         """, height=0)
         st.session_state.print_trigger = None
+elif page == "👤 AC Customer Wallet Manager":
+    st.title("👤 Account Customer Wallet & Credit Manager")
+    st.markdown("---")
+    adm_col1, adm_col2 = st.columns(2)
+    with adm_col1.form("register_profile_form", clear_on_submit=True):
+        st.subheader("📝 Register New AC Client Profile")
+        new_name = st.text_input("Company or Customer Name")
+        initial_pay = st.number_input("Advance Pre-paid Deposit Amount (RM)", min_value=0.0, step=10.0, format="%.2f")
+        if st.form_submit_button("Create Customer Profile"):
+            if new_name and add_customer(new_name, initial_pay): st.success(f"Configured ledger profile for {new_name.upper()}!"); st.rerun()
+            else: st.error("Error creating profile.")
+    with adm_col2.form("topup_credit_form", clear_on_submit=True):
+        st.subheader("💵 Log Advance Cash Payment (Top-Up)")
+        customer_list_raw = get_customers()
+        if customer_list_raw:
+            customer_list = [n for n, _ in customer_list_raw]
+            target_topup = st.selectbox("Select Client Target Account", customer_list)
+            topup_amt = st.number_input("Cash Payment Top-Up Received (RM)", min_value=1.0, step=10.0, format="%.2f")
+            if st.form_submit_button("Confirm Payment Top-Up"):
+                topup_customer_credit(target_topup, topup_amt); st.success("Topup added!"); st.rerun()
+        else: st.info("No active accounts registered to top up yet.")
+        
+    st.markdown("---"); st.subheader("📊 Live Prepaid Balance Ledger & Usage Report")
+    conn = sqlite3.connect(DB_NAME); customers_data = get_customers(); final_report = []
+    for name, bal in customers_data:
+        p_liters = pd.read_sql_query(f"SELECT SUM(liter) as lit, SUM(dibayar_rm) as amt FROM petrol_pump_2 WHERE customer_name='{name}' UNION ALL SELECT SUM(liter), SUM(dibayar_rm) FROM petrol_pump_4 WHERE customer_name='{name}' UNION ALL SELECT SUM(liter), SUM(dibayar_rm) FROM petrol_pump_6 WHERE customer_name='{name}' UNION ALL SELECT SUM(liter), SUM(dibayar_rm) FROM petrol_pump_7 WHERE customer_name='{name}'", conn)
+        d_liters = pd.read_sql_query(f"SELECT SUM(liter) as lit, SUM(dibayar_rm) as amt FROM diesel_pump_1 WHERE customer_name='{name}' UNION ALL SELECT SUM(liter), SUM(dibayar_rm) FROM diesel_pump_3 WHERE customer_name='{name}' UNION ALL SELECT SUM(liter), SUM(dibayar_rm) FROM diesel_pump_5 WHERE customer_name='{name}' UNION ALL SELECT SUM(liter), SUM(dibayar_rm) FROM diesel_pump_8 WHERE customer_name='{name}'", conn)
+        total_lit = float(p_liters['lit'].fillna(0).sum() + d_liters['lit'].fillna(0).sum())
+        total_spent = float(p_liters['amt'].fillna(0).sum() + d_liters['amt'].fillna(0).sum())
+        status = "⚠️ LOW CREDIT" if bal <= 150.0 else "✅ Good Standing"
+        final_report.append({"Customer Name": name, "Current Balance (RM)": round(bal, 2), "Total Fuel Litres Pumped": round(total_lit, 2), "Total Fuel Expenditures (RM)": round(total_spent, 2), "Account Status": status})
+    conn.close()
+    if final_report: st.dataframe(pd.DataFrame(final_report), use_container_width=True)
 elif page == "🔏 Shift Settlement Desk":
     st.title("🔏 Shift Settlement & Counter Audit Desk")
     st.markdown("---")
