@@ -2,21 +2,21 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded to v23 to deploy the database unpack patch safely
-DB_NAME = 'fuel_station_v23.db'
+# Upgraded database architecture to v25 to process direct shift corrections safely
+DB_NAME = 'fuel_station_v25.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     for i in (2, 4, 6, 7):
         c.execute(f'''CREATE TABLE IF NOT EXISTS petrol_pump_{i} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, 
-            diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL, 
-            customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
+            id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT UNIQUE, timestamp TEXT, 
+            diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, subsidy REAL, 
+            payment_method TEXT, customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
     for i in (1, 3, 5, 8):
         c.execute(f'''CREATE TABLE IF NOT EXISTS diesel_pump_{i} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, 
+            id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT UNIQUE, timestamp TEXT, 
             diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL, 
-            customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
+            payment_method TEXT, customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
     c.execute('CREATE TABLE IF NOT EXISTS config_prices (fuel_type TEXT, start_date TEXT, end_date TEXT, commercial_price REAL, PRIMARY KEY (fuel_type, start_date))')
     c.execute('CREATE TABLE IF NOT EXISTS account_customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, credit_balance REAL DEFAULT 0.0, created_at TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS shift_settlements (
@@ -37,7 +37,7 @@ def get_price_for_date(f_type, d_str):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date", (f_type, d_str[:10]))
     res = c.fetchone(); conn.close()
-    return res[0] if res else (3.37 if f_type == 'petrol' else 3.97)
+    return res if res else (3.37 if f_type == 'petrol' else 3.97)
 
 def update_weekly_price(f_type, s_d, e_d, p):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -48,7 +48,7 @@ def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT last_id FROM receipt_counter")
     last_id_row = c.fetchone()
-    last_id = last_id_row[0] if last_id_row else 0
+    last_id = last_id_row if last_id_row else 0
     next_id = last_id + 1
     c.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit(); conn.close()
@@ -59,8 +59,7 @@ def get_last_meter_reading(pump_no):
     try:
         c.execute(f"SELECT meter FROM petrol_pump_{pump_no} ORDER BY id DESC LIMIT 1")
         res = c.fetchone()
-        # Complete fix applied here: added index lookup extraction [0] to unpack the number safely from tuple
-        return float(res[0]) if res and res[0] is not None else 0.0
+        return float(res) if res and res is not None else 0.0
     except: return 0.0
     finally: conn.close()
 
@@ -161,9 +160,9 @@ if page == "🛒 Cashier Counter":
                 rcpt = get_next_receipt_number(prefix); now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
                 if prefix == "PET":
-                    cursor.execute(f"INSERT INTO petrol_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, meter, qr_ac, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, calculated_meter, 0.0, subsidy, chosen_customer, original_prepaid, cash_refund))
+                    cursor.execute(f"INSERT INTO petrol_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, meter, subsidy, payment_method, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, calculated_meter, subsidy, payment_method, chosen_customer, original_prepaid, cash_refund))
                 else:
-                    cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, chosen_customer, original_prepaid, cash_refund))
+                    cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, payment_method, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, payment_method, chosen_customer, original_prepaid, cash_refund))
                 conn.commit(); conn.close()
                 if payment_method == "AC (Account Customer)": deduct_customer_credit(chosen_customer, dibayar_rm)
                 
@@ -261,8 +260,49 @@ elif page == "🔏 Shift Settlement Desk":
             sys_ac += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}")
             sys_cash -= float(c.fetchone()[0])
-        except: pass
     conn.close()
+
+    with st.expander("🛠️ Open Supervisor Data Override & Correction Terminal", expanded=False):
+        st.subheader("Modify Cashier Transaction Entries Manually")
+        ov_fuel = st.selectbox("Override Target Fuel", ["Petrol", "Diesel"], key="ov_fuel")
+        ov_pump = st.selectbox("Select Target Pump", (2, 4, 6, 7) if ov_fuel == "Petrol" else (1, 3, 5, 8), key="ov_pump")
+        t_target = f"petrol_pump_{ov_pump}" if ov_fuel == "Petrol" else f"diesel_pump_{ov_pump}"
+        
+        conn = sqlite3.connect(DB_NAME); rcpt_list = []
+        try:
+            rcpt_df = pd.read_sql_query(f"SELECT receipt_no FROM {t_target} ORDER BY timestamp DESC", conn)
+            rcpt_list = rcpt_df['receipt_no'].tolist()
+        except: pass
+        conn.close()
+        
+        if rcpt_list:
+            target_rcpt = st.selectbox("Choose Receipt Number to Correct", rcpt_list)
+            conn = sqlite3.connect(DB_NAME)
+            orig_row = pd.read_sql_query(f"SELECT * FROM {t_target} WHERE receipt_no='{target_rcpt}'", conn).iloc[0]
+            conn.close()
+            
+            col_ed1, col_ed2 = st.columns(2)
+            new_diisi = col_ed1.number_input("Correct Diisi (RM) Gross Value", min_value=0.0, value=float(orig_row['diisi_rm']), step=1.0)
+            new_pay_method = col_ed2.selectbox("Correct Payment Type", ["Cash", "Credit Card", "QR Pay", "AC (Account Customer)"], index=["Cash", "Credit Card", "QR Pay", "AC (Account Customer)"].index(orig_row['payment_method']))
+            
+            if ov_fuel == "Petrol":
+                calc_lit = round(new_diisi / active_market_petrol, 2)
+                calc_paid = round(orig_row['harga'] * calc_lit, 1)
+                calc_sub = round(abs((calc_lit * round(active_market_petrol - 1.99, 2)) - new_diisi), 2) if orig_row['harga'] == 1.99 else 0.0
+            else:
+                calc_lit = round(new_diisi / active_market_diesel, 2)
+                calc_paid = round(2.15 * calc_lit, 2) if orig_row['harga'] == 2.15 else new_diisi
+                calc_sub = round(new_diisi - calc_paid, 2) if orig_row['harga'] == 2.15 else 0.0
+                
+            if st.button("Apply Supervisor Correction Override", type="secondary", use_container_width=True):
+                conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
+                if ov_fuel == "Petrol":
+                    cursor.execute(f"UPDATE {t_target} SET diisi_rm=?, dibayar_rm=?, liter=?, subsidy=?, payment_method=? WHERE receipt_no=?", (new_diisi, calc_paid, calc_lit, calc_sub, new_pay_method, target_rcpt))
+                else:
+                    cursor.execute(f"UPDATE {t_target} SET diisi_rm=?, dibayar_rm=?, liter=?, subsidy=?, payment_method=? WHERE receipt_no=?", (new_diisi, calc_paid, calc_lit, calc_sub, new_pay_method, target_rcpt))
+                conn.commit(); conn.close()
+                st.success(f"📊 Modified entry {target_rcpt} successfully!"); st.rerun()
+        else: st.info("No logs saved under this pump unit yet.")
 
     st.subheader("📝 Supervisor Shift Entry Closing Form")
     sv_name = st.text_input("Enter Supervisor Name")
@@ -273,7 +313,7 @@ elif page == "🔏 Shift Settlement Desk":
     phys_ac = col_col2.number_input("Physical Corporate AC Delivery Slips Value (RM)", min_value=0.0, step=10.0, format="%.2f")
 
     v_cash = round(phys_cash - sys_cash, 2); v_cc = round(phys_cc - sys_cc, 2); v_qr = round(phys_qr - sys_qr, 2); v_ac = round(phys_ac - sys_ac, 2)
-    st.markdown("---"); st.subheader("📊 Live Shift Variance Reconciliation Grid")
+    st.markdown("### 📊 Live Shift Variance Reconciliation Grid")
     recon_data = [
         {"Payment Method": "Cash Drawer (Net of Refunds)", "System Expected (RM)": sys_cash, "Supervisor Count (RM)": phys_cash, "Variance (RM)": v_cash},
         {"Payment Method": "Credit Card Terminal", "System Expected (RM)": sys_cc, "Supervisor Count (RM)": phys_cc, "Variance (RM)": v_cc},
@@ -281,7 +321,6 @@ elif page == "🔏 Shift Settlement Desk":
         {"Payment Method": "AC (Account Customer Slips)", "System Expected (RM)": sys_ac, "Supervisor Count (RM)": phys_ac, "Variance (RM)": v_ac}
     ]
     df_recon = pd.DataFrame(recon_data)
-    
     def color_variance(val):
         if val < 0: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
         elif val > 0: return 'background-color: #c9f7f5; color: #277973; font-weight: bold'
@@ -292,9 +331,8 @@ elif page == "🔏 Shift Settlement Desk":
         if sv_name:
             conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
             cursor.execute('''INSERT INTO shift_settlements (timestamp, supervisor_name, sys_cash, phys_cash, var_cash, sys_cc, phys_cc, var_cc, sys_qr, phys_qr, var_qr, sys_ac, phys_ac, var_ac) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sv_name, sys_cash, phys_cash, v_cash, sys_cc, phys_cc, v_cc, sys_qr, phys_qr, v_qr, sys_ac, phys_ac, v_ac))
-            conn.commit(); conn.close(); st.success("✅ Shift settlement successfully locked into admin logs!"); st.rerun()
+            conn.commit(); conn.close(); st.success("✅ Shift settlement successfully saved!"); st.rerun()
         else: st.error("Please enter Supervisor Name.")
-
 else:
     st.title("⚙️ Operations Configuration & History View")
     st.markdown("---"); st.subheader("📝 Update Weekly Commercial Market Price Tiers")
@@ -312,6 +350,7 @@ else:
     d_price = col_setup2.number_input("New Commercial Diesel Price (RM)", min_value=0.0, value=active_market_diesel, step=0.01, format="%.2f", key="d_val")
     if col_setup2.button("Apply New Weekly Diesel Rate", use_container_width=True):
         update_weekly_price('diesel', d_start, d_end, d_price); st.success("Saved Diesel tier!"); st.rerun()
+        
     st.markdown("---"); st.subheader("📊 Saved Price Logs Database")
     conn = sqlite3.connect(DB_NAME); df_prices = pd.read_sql_query("SELECT fuel_type, start_date, end_date, commercial_price FROM config_prices ORDER BY start_date DESC", conn); conn.close()
     if not df_prices.empty: st.dataframe(df_prices, use_container_width=True)
@@ -339,13 +378,12 @@ else:
             df_tmp = pd.read_sql_query(f"SELECT * FROM diesel_pump_{d_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
             if not df_tmp.empty:
                 df_tmp['Fuel Type'] = 'Diesel'; df_tmp['Pump No'] = d_no
-                df_tmp = df_tmp.rename(columns={'verification_check': 'meter'})
-                df_tmp['qr_ac'] = 0.0; all_rows.append(df_tmp)
+                df_tmp = df_tmp.rename(columns={'verification_check': 'subsidy'}); all_rows.append(df_tmp)
         except: pass
     conn.close()
     if all_rows:
         master_df = pd.concat(all_rows, ignore_index=True).sort_values(by=['Pump No', 'timestamp'], ascending=[True, True])
-        ordered_cols = ['Pump No', 'Fuel Type', 'receipt_no', 'timestamp', 'diisi_rm', 'dibayar_rm', 'harga', 'liter', 'meter', 'qr_ac', 'subsidy', 'customer_name', 'original_prepaid', 'cash_refund']
+        ordered_cols = ['Pump No', 'Fuel Type', 'receipt_no', 'timestamp', 'diisi_rm', 'dibayar_rm', 'harga', 'liter', 'subsidy', 'payment_method', 'customer_name', 'original_prepaid', 'cash_refund']
         master_df = master_df[ordered_cols]
         st.dataframe(master_df, use_container_width=True)
         st.download_button(label="📥 Download Sorted Consolidated CSV", data=master_df.to_csv(index=False).encode('utf-8'), file_name=f"station_master_report_{start_filter}_to_{end_filter}.csv", mime='text/csv', use_container_width=True)
