@@ -11,6 +11,7 @@ def init_db():
     cursor = conn.cursor()
     
     # 1. Create specific custom tables for your specific layout
+    # Petrol Pumps: 2, 4, 6, 7
     for i in:
         cursor.execute(f'''
             CREATE TABLE IF NOT EXISTS petrol_pump_{i} (
@@ -18,6 +19,7 @@ def init_db():
                 diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL
             )
         ''')
+    # Diesel Pumps: 1, 3, 5, 8
     for i in:
         cursor.execute(f'''
             CREATE TABLE IF NOT EXISTS diesel_pump_{i} (
@@ -36,13 +38,13 @@ def init_db():
     
     # Set starting default values if table is blank
     cursor.execute("SELECT COUNT(*) FROM config_prices")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO config_prices (fuel_type, commercial_price) VALUES ('petrol', 3.37)")
         cursor.execute("INSERT INTO config_prices (fuel_type, commercial_price) VALUES ('diesel', 3.97)")
         
     cursor.execute('CREATE TABLE IF NOT EXISTS receipt_counter (last_id INTEGER PRIMARY KEY)')
     cursor.execute("SELECT COUNT(*) FROM receipt_counter")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO receipt_counter (last_id) VALUES (0)")
     conn.commit()
     conn.close()
@@ -223,5 +225,3 @@ with tab_admin:
     
     conn = sqlite3.connect(DB_NAME)
     try:
-        df = pd.read_sql_query(f"SELECT * FROM {target_table}", conn)
-    except:
