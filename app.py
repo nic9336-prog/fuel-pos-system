@@ -12,7 +12,7 @@ def init_db():
     
     # 1. Create specific custom tables for your specific layout
     # Petrol Pumps: 2, 4, 6, 7
-    for i in:
+for i in:
         cursor.execute(f'''
             CREATE TABLE IF NOT EXISTS petrol_pump_{i} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT,
@@ -20,7 +20,7 @@ def init_db():
             )
         ''')
     # Diesel Pumps: 1, 3, 5, 8
-    for i in:
+for i in:
         cursor.execute(f'''
             CREATE TABLE IF NOT EXISTS diesel_pump_{i} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT,
