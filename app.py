@@ -1,32 +1,28 @@
 import streamlit as st, sqlite3, pandas as pd
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_v10.db'
+DB_NAME = 'fuel_station_v11.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
-    # Create tables for Petrol Pumps (2, 4, 6, 7)
     for i in (2, 4, 6, 7):
         c.execute(f'''CREATE TABLE IF NOT EXISTS petrol_pump_{i} (
             id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, 
             diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL, customer_name TEXT)''')
-    # Create tables for Diesel Pumps (1, 3, 5, 8)
     for i in (1, 3, 5, 8):
         c.execute(f'''CREATE TABLE IF NOT EXISTS diesel_pump_{i} (
             id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, 
             diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL, customer_name TEXT)''')
-    # System Price Settings table
     c.execute('CREATE TABLE IF NOT EXISTS config_prices (fuel_type TEXT, start_date TEXT, end_date TEXT, commercial_price REAL, PRIMARY KEY (fuel_type, start_date))')
-    # Account Customer Profile registry table
     c.execute('CREATE TABLE IF NOT EXISTS account_customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, created_at TEXT)')
     c.execute("SELECT COUNT(*) FROM config_prices")
-    if c.fetchone() == 0:
+    if c.fetchone()[0] == 0:
         c.executemany("INSERT INTO config_prices VALUES (?,?,?,?)", [
             ('petrol', '2026-07-01', '2026-07-08', 3.37), ('diesel', '2026-07-01', '2026-07-08', 3.97),
             ('petrol', '2026-07-09', '2026-07-15', 3.37), ('diesel', '2026-07-09', '2026-07-15', 3.97)
         ])
     c.execute('CREATE TABLE IF NOT EXISTS receipt_counter (last_id INTEGER PRIMARY KEY)')
-    if c.execute("SELECT COUNT(*) FROM receipt_counter").fetchone() == 0: c.execute("INSERT INTO receipt_counter VALUES (0)")
+    if c.execute("SELECT COUNT(*) FROM receipt_counter").fetchone()[0] == 0: c.execute("INSERT INTO receipt_counter VALUES (0)")
     conn.commit(); conn.close()
 
 def get_price_for_date(f_type, d_str):
@@ -42,7 +38,10 @@ def update_weekly_price(f_type, s_d, e_d, p):
 
 def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
-    c.execute("SELECT last_id FROM receipt_counter"); next_id = c.fetchone()[0] + 1
+    c.execute("SELECT last_id FROM receipt_counter")
+    last_id_row = c.fetchone()
+    last_id = last_id_row[0] if last_id_row else 0
+    next_id = last_id + 1
     c.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit(); conn.close()
     return f"{prefix}-{next_id:06d}"
@@ -110,29 +109,22 @@ if page == "🛒 Cashier Counter":
     st.markdown("### 📊 Live Math Summary"); cm1, cm2, cm3 = st.columns(3)
     cm1.metric("LITER Volume", f"{liter:.3f} L"); cm2.metric("Subsidy Amount", f"RM {subsidy:.2f}"); cm3.metric("DIBAYAR (Amount Due)", f"RM {dibayar_rm:.2f}")
     
-    # Expanded Payment Method selector with dedicated Account Customer (AC) options
     payment_method = st.selectbox("Payment Type Chosen", ["Cash", "Credit Card", "QR Pay", "AC (Account Customer)"])
     chosen_customer = "-"
     
     if payment_method == "AC (Account Customer)":
         st.markdown("#### 👤 Account Customer Details")
         cust_col1, cust_col2 = st.columns(2)
-        
         existing_customers = get_customers()
-        if existing_customers:
-            chosen_customer = cust_col1.selectbox("Select Account Customer", existing_customers)
-        else:
-            cust_col1.warning("No customers registered yet. Please use the form on the right.")
+        if existing_customers: chosen_customer = cust_col1.selectbox("Select Account Customer", existing_customers)
+        else: cust_col1.warning("No customers registered yet. Please use the form on the right.")
             
         with cust_col2.form("add_new_cust_form", clear_on_submit=True):
             new_cust_name = st.text_input("Register New Customer Name")
             if st.form_submit_button("Add Customer"):
-                if new_cust_name:
-                    if add_customer(new_cust_name):
-                        st.success(f"Registered {new_cust_name.upper()} successfully!")
-                        st.rerun()
-                    else: st.error("Customer already exists.")
-    
+                if new_cust_name and add_customer(new_cust_name):
+                    st.success(f"Registered {new_cust_name.upper()} successfully!"); st.rerun()
+
     if st.button("Submit Order & Log Record", type="primary", use_container_width=True):
         if diisi_rm > 0 or liter > 0:
             prefix = "PET" if "Petrol" in fuel_category else "DSL"
@@ -144,14 +136,10 @@ if page == "🛒 Cashier Counter":
                 cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, customer_name) VALUES (?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, chosen_customer))
             conn.commit(); conn.close()
             
-            # --- THERMAL RECEIPT DISPLAY MODULE ---
             st.success(f"✅ Transaction Saved! Receipt #{rcpt}")
             st.markdown("### 📄 Print Preview (Customer Receipt Layout)")
-            receipt_container = st.container(border=True)
-            with receipt_container:
-                col_rcpt, _ = st.columns([2, 3])
-                with col_rcpt:
-                    st.code(f"""
+            b_prc = active_market_petrol if "Petrol" in fuel_category else active_market_diesel
+            st.code(f"""
 ================================
        MADANI FUEL STATION      
    Lot 123, Jalan Besar, MY     
@@ -163,7 +151,7 @@ PAY METHOD: {payment_method}
 CUSTOMER  : {chosen_customer}
 --------------------------------
 Fuel Volume: {liter:.3f} Litres
-Base Price : RM {active_market_petrol:.2f}/L if "Petrol" in fuel_category else f"RM {active_market_diesel:.2f}/L"
+Base Price : RM {b_prc:.2f}/L
 Gross Cost : RM {diisi_rm:.2f}
 --------------------------------
 MADANI SUBSIDY SAVINGS:
