@@ -4,7 +4,7 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-# Changed to v2 to clear out old database structure conflicts
+# Kept as v2 to preserve any testing records you just logged
 DB_NAME = 'fuel_station_v2.db'
 
 def init_db():
@@ -75,7 +75,8 @@ def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT last_id FROM receipt_counter")
-    last_id = cursor.fetchone()[0]
+    last_id_row = cursor.fetchone()
+    last_id = last_id_row[0] if last_id_row else 0
     next_id = last_id + 1
     cursor.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit()
@@ -99,13 +100,17 @@ init_db()
 st.set_page_config(page_title="Station POS & Admin Suite", layout="wide")
 tab_cashier, tab_admin = st.tabs(["🛒 Cashier Counter", "📊 Admin Reporting & Setup Dashboard"])
 
+# Get current system date for processing
+pc_now = datetime.now()
+current_date_str = pc_now.strftime('%Y-%m-%d')
+
+# Fetch active prices right now
+active_market_petrol = get_price_for_date('petrol', current_date_str)
+active_market_diesel = get_price_for_date('diesel', current_date_str)
+
 # ================= TAB 1: CASHIER COUNTER =================
 with tab_cashier:
     st.title("⛽ Fuel Transaction Terminal")
-    
-    # PC Local Time Sync
-    pc_now = datetime.now()
-    current_date_str = pc_now.strftime('%Y-%m-%d')
     st.caption(f"🕒 **Computer Clock Sync:** {pc_now.strftime('%A, %d %B %Y | %I:%M:%S %p')}")
     
     col_config1, col_config2 = st.columns(2)
@@ -114,42 +119,42 @@ with tab_cashier:
     with col_config2:
         if fuel_category == "Petrol (RON95)":
             pump_selection = st.selectbox("Select Pump", [2, 4, 6, 7], format_func=lambda x: f"Pump {x}")
-            market_price = get_price_for_date('petrol', current_date_str)
+            harga = active_market_petrol
         else:
             pump_selection = st.selectbox("Select Pump", [1, 3, 5, 8], format_func=lambda x: f"Pump {x}")
-            market_price = get_price_for_date('diesel', current_date_str)
+            harga = active_market_diesel
             
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
     
     if fuel_category == "Petrol (RON95)":
         with col_in1:
-            rate_type = st.radio("Pricing Tier", [f"Normal Market (RM {market_price:.2f})", "Subsidized (RM 1.99)"])
-            harga = 1.99 if "Subsidized" in rate_type else market_price
+            rate_type = st.radio("Pricing Tier", [f"Normal Market (RM {active_market_petrol:.2f})", "Subsidized (RM 1.99)"])
+            harga_applied = 1.99 if "Subsidized" in rate_type else active_market_petrol
             liter = st.number_input("LITER Dispensed", min_value=0.0, step=0.001, format="%.3f")
         with col_in2:
             diisi_rm = st.number_input("Gross Filled Amount (Diisi RM)", min_value=0.0, step=0.01, format="%.2f")
             qr_ac = st.number_input("QR / Card Payment (QR/AC)", min_value=0.0, step=0.01, format="%.2f")
         
-        dibayar_rm = round(harga * liter, 1)
-        subsidy_rate = round(market_price - 1.99, 2)
-        subsidy = round(abs((liter * subsidy_rate) - qr_ac), 2) if harga == 1.99 else 0.0
+        dibayar_rm = round(harga_applied * liter, 1)
+        subsidy_rate = round(active_market_petrol - 1.99, 2)
+        subsidy = round(abs((liter * subsidy_rate) - qr_ac), 2) if harga_applied == 1.99 else 0.0
         prev_m = get_last_meter_reading(pump_selection)
         calculated_meter = prev_m + liter
         
     else: # Diesel Logic
         with col_in1:
             diisi_rm = st.number_input("Diisi (RM) - From Pump", min_value=0.0, step=0.01, format="%.2f")
-            rate_type = st.radio("Pricing Tier", [f"Commercial Market (RM {market_price:.2f})", "Subsidized (RM 2.15)"])
-            harga = 2.15 if "Subsidized" in rate_type else market_price
+            rate_type = st.radio("Pricing Tier", [f"Commercial Market (RM {active_market_diesel:.2f})", "Subsidized (RM 2.15)"])
+            harga_applied = 2.15 if "Subsidized" in rate_type else active_market_diesel
         with col_in2:
             st.info("💡 Litres and Subsidy are calculated automatically from Diisi.")
         
-        liter = round(diisi_rm / market_price, 2) if market_price > 0 else 0.0
-        if harga == 2.15:
+        liter = round(diisi_rm / active_market_diesel, 2) if active_market_diesel > 0 else 0.0
+        if harga_applied == 2.15:
             dibayar_rm = round(liter * 2.15, 2)
             subsidy = round(diisi_rm - dibayar_rm, 2)
-            subsidy_rate = round(market_price - 2.15, 2)
+            subsidy_rate = round(active_market_diesel - 2.15, 2)
             v_check = round(abs(liter * subsidy_rate - subsidy), 2)
         else:
             dibayar_rm = diisi_rm
@@ -177,23 +182,18 @@ with tab_cashier:
             if prefix == "PET":
                 t_name = f"petrol_pump_{pump_selection}"
                 cursor.execute(f"INSERT INTO {t_name} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, meter, qr_ac, subsidy) VALUES (?,?,?,?,?,?,?,?,?)",
-                               (rcpt, now_time, diisi_rm, dibayar_rm, harga, liter, calculated_meter, qr_ac, subsidy))
+                               (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, calculated_meter, qr_ac, subsidy))
             else:
                 t_name = f"diesel_pump_{pump_selection}"
                 cursor.execute(f"INSERT INTO {t_name} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy) VALUES (?,?,?,?,?,?,?,?)",
-                               (rcpt, now_time, diisi_rm, dibayar_rm, harga, liter, v_check, subsidy))
+                               (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy))
                 
             conn.commit()
             conn.close()
             st.success(f"✅ Record saved under {t_name.upper()} as receipt {rcpt}!")
+            st.rerun()
         else:
             st.error("Please provide non-zero amounts before saving.")
 
 # ================= TAB 2: ADMIN LOGS & PRICE SETUP =================
 with tab_admin:
-    st.title("⚙️ Operations Configuration & History View")
-    
-    # 7-Day Cycle Scheduler Splits
-    with st.expander("📝 Update Weekly Commercial Market Price Tiers", expanded=True):
-        st.subheader("Split Weekly Fuel Rate Schedule Settings")
-        
