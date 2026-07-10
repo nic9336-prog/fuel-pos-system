@@ -2,7 +2,8 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_v18.db'
+# Upgraded to v19 to deploy the direct scalar database query engine smoothly
+DB_NAME = 'fuel_station_v19.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -229,21 +230,24 @@ elif page == "👤 AC Customer Wallet Manager":
 elif page == "🔏 Shift Settlement Desk":
     st.title("🔏 Shift Settlement & Counter Audit Desk")
     st.markdown("---")
-    conn = sqlite3.connect(DB_NAME); sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
     
-    # Empty database handling fix: added safe scalar .fillna(0) fallbacks to prevent None type crashes
+    # Complete fix: Using direct SQLite scalar methods. If no records exist, the IFNULL SQL function automatically drops a 0.0 safely.
+    conn = sqlite3.connect(DB_NAME); c = conn.cursor()
+    sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
+    
     for i in (2, 4, 6, 7):
-        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM petrol_pump_{i}", conn).fillna(0).iloc[0,0] or 0.0)
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Cash'"); sys_cash += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Credit Card'"); sys_cc += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='QR Pay'"); sys_qr += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'"); sys_ac += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM petrol_pump_{i}"); sys_cash -= c.fetchone()
+        
     for i in (1, 3, 5, 8):
-        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0] or 0.0)
-        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM diesel_pump_{i}", conn).fillna(0).iloc[0,0] or 0.0)
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Cash'"); sys_cash += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Credit Card'"); sys_cc += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='QR Pay'"); sys_qr += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'"); sys_ac += c.fetchone()
+        c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}"); sys_cash -= c.fetchone()
     conn.close()
 
     st.subheader("📝 Supervisor Shift Entry Closing Form")
