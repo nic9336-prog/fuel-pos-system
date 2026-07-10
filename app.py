@@ -2,7 +2,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_NAME = 'fuel_station_master.db'
 
@@ -10,47 +10,61 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Created manually without using list loops to prevent syntax errors
-    # Create Petrol Pump tables
+    # 1. Create specific custom pump tables manually to avoid formatting strip crashes
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_7 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     
-    # Create Diesel Pump tables
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_1 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_3 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_5 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_8 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     
-    # System Price Settings table
-    cursor.execute('CREATE TABLE IF NOT EXISTS config_prices (fuel_type TEXT PRIMARY KEY, commercial_price REAL)')
+    # 2. Expanded Price History tracking schema
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS config_prices (
+            fuel_type TEXT,
+            start_date TEXT,
+            end_date TEXT,
+            commercial_price REAL,
+            PRIMARY KEY (fuel_type, start_date)
+        )
+    ''')
     
-    # Set starting default values if table is blank
+    # Pre-populate baseline history matching your actual schedule structure
     cursor.execute("SELECT COUNT(*) FROM config_prices")
-    if cursor.fetchone() == 0:
-        cursor.execute("INSERT INTO config_prices (fuel_type, commercial_price) VALUES ('petrol', 3.37)")
-        cursor.execute("INSERT INTO config_prices (fuel_type, commercial_price) VALUES ('diesel', 3.97)")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO config_prices VALUES ('petrol', '2026-07-01', '2026-07-08', 3.37)")
+        cursor.execute("INSERT INTO config_prices VALUES ('diesel', '2026-07-01', '2026-07-08', 3.97)")
+        cursor.execute("INSERT INTO config_prices VALUES ('petrol', '2026-07-09', '2026-07-15', 3.37)")
+        cursor.execute("INSERT INTO config_prices VALUES ('diesel', '2026-07-09', '2026-07-15', 3.97)")
         
     cursor.execute('CREATE TABLE IF NOT EXISTS receipt_counter (last_id INTEGER PRIMARY KEY)')
     cursor.execute("SELECT COUNT(*) FROM receipt_counter")
-    if cursor.fetchone() == 0:
+    if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO receipt_counter (last_id) VALUES (0)")
     conn.commit()
     conn.close()
 
-def get_current_prices():
+def get_price_for_date(fuel_type, date_str):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT fuel_type, commercial_price FROM config_prices")
-    rows = cursor.fetchall()
+    cursor.execute(
+        "SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date",
+        (fuel_type, date_str[:10])
+    )
+    res = cursor.fetchone()
     conn.close()
-    return {row[0]: row[1] for row in rows}
+    return res[0] if res else (3.37 if fuel_type == 'petrol' else 3.97)
 
-def update_price(fuel_type, new_price):
+def update_weekly_price(fuel_type, start_date, end_date, price):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("UPDATE config_prices SET commercial_price = ? WHERE fuel_type = ?", (new_price, fuel_type))
+    cursor.execute(
+        "INSERT OR REPLACE INTO config_prices (fuel_type, start_date, end_date, commercial_price) VALUES (?, ?, ?, ?)",
+        (fuel_type, start_date, end_date, price)
+    )
     conn.commit()
     conn.close()
 
@@ -58,8 +72,7 @@ def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT last_id FROM receipt_counter")
-    last_id_row = cursor.fetchone()
-    last_id = last_id_row[0] if last_id_row else 0
+    last_id = cursor.fetchone()[0]
     next_id = last_id + 1
     cursor.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit()
@@ -80,49 +93,43 @@ def get_last_meter_reading(pump_no):
 
 init_db()
 
-# Pull dynamically active pricing limits
-current_prices = get_current_prices()
-MARKET_PETROL = current_prices.get('petrol', 3.37)
-MARKET_DIESEL = current_prices.get('diesel', 3.97)
-
 st.set_page_config(page_title="Station POS & Admin Suite", layout="wide")
-
-# Navigation Tabs
 tab_cashier, tab_admin = st.tabs(["🛒 Cashier Counter", "📊 Admin Reporting & Setup Dashboard"])
 
 # ================= TAB 1: CASHIER COUNTER =================
 with tab_cashier:
     st.title("⛽ Fuel Transaction Terminal")
     
-    # Pull current timestamp from your Windows computer clock automatically
+    # PC Local Time Sync
     pc_now = datetime.now()
+    current_date_str = pc_now.strftime('%Y-%m-%d')
     st.caption(f"🕒 **Computer Clock Sync:** {pc_now.strftime('%A, %d %B %Y | %I:%M:%S %p')}")
     
     col_config1, col_config2 = st.columns(2)
     with col_config1:
         fuel_category = st.selectbox("Select Fuel Type", ["Petrol (RON95)", "Diesel"])
     with col_config2:
-        # Custom non-sequential pump numbers explicitly split text-style to protect database routing
         if fuel_category == "Petrol (RON95)":
             pump_selection = st.selectbox("Select Pump", [2, 4, 6, 7], format_func=lambda x: f"Pump {x}")
+            market_price = get_price_for_date('petrol', current_date_str)
         else:
             pump_selection = st.selectbox("Select Pump", [1, 3, 5, 8], format_func=lambda x: f"Pump {x}")
-        
+            market_price = get_price_for_date('diesel', current_date_str)
+            
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
     
     if fuel_category == "Petrol (RON95)":
         with col_in1:
-            rate_type = st.radio("Pricing Tier", [f"Normal Market (RM {MARKET_PETROL:.2f})", "Subsidized (RM 1.99)"])
-            harga = 1.99 if "Subsidized" in rate_type else MARKET_PETROL
+            rate_type = st.radio("Pricing Tier", [f"Normal Market (RM {market_price:.2f})", "Subsidized (RM 1.99)"])
+            harga = 1.99 if "Subsidized" in rate_type else market_price
             liter = st.number_input("LITER Dispensed", min_value=0.0, step=0.001, format="%.3f")
         with col_in2:
             diisi_rm = st.number_input("Gross Filled Amount (Diisi RM)", min_value=0.0, step=0.01, format="%.2f")
             qr_ac = st.number_input("QR / Card Payment (QR/AC)", min_value=0.0, step=0.01, format="%.2f")
         
-        # Formula adjustments tracking your spreadsheet layout rules
         dibayar_rm = round(harga * liter, 1)
-        subsidy_rate = round(MARKET_PETROL - 1.99, 2)
+        subsidy_rate = round(market_price - 1.99, 2)
         subsidy = round(abs((liter * subsidy_rate) - qr_ac), 2) if harga == 1.99 else 0.0
         prev_m = get_last_meter_reading(pump_selection)
         calculated_meter = prev_m + liter
@@ -130,17 +137,16 @@ with tab_cashier:
     else: # Diesel Logic
         with col_in1:
             diisi_rm = st.number_input("Diisi (RM) - From Pump", min_value=0.0, step=0.01, format="%.2f")
-            rate_type = st.radio("Pricing Tier", [f"Commercial Market (RM {MARKET_DIESEL:.2f})", "Subsidized (RM 2.15)"])
-            harga = 2.15 if "Subsidized" in rate_type else MARKET_DIESEL
+            rate_type = st.radio("Pricing Tier", [f"Commercial Market (RM {market_price:.2f})", "Subsidized (RM 2.15)"])
+            harga = 2.15 if "Subsidized" in rate_type else market_price
         with col_in2:
-            st.info("💡 Litres and Subsidy are calculated automatically from Diisi value input.")
+            st.info("💡 Litres and Subsidy are calculated automatically from Diisi.")
         
-        # Replicating your Excel math matrix logic
-        liter = round(diisi_rm / MARKET_DIESEL, 2) if MARKET_DIESEL > 0 else 0.0
+        liter = round(diisi_rm / market_price, 2) if market_price > 0 else 0.0
         if harga == 2.15:
             dibayar_rm = round(liter * 2.15, 2)
             subsidy = round(diisi_rm - dibayar_rm, 2)
-            subsidy_rate = round(MARKET_DIESEL - 2.15, 2)
+            subsidy_rate = round(market_price - 2.15, 2)
             v_check = round(abs(liter * subsidy_rate - subsidy), 2)
         else:
             dibayar_rm = diisi_rm
@@ -148,7 +154,6 @@ with tab_cashier:
             v_check = 0.0
         calculated_meter = 0.0
 
-    # UI Feedback Metric Display Cards
     st.markdown("### 📊 Live Math Summary")
     cm1, cm2, cm3 = st.columns(3)
     cm1.metric("LITER Volume", f"{liter:.3f} L")
@@ -177,7 +182,7 @@ with tab_cashier:
                 
             conn.commit()
             conn.close()
-            st.success(f"✅ Record saved into system backend database under {t_name.upper()} as transaction ticket ID {rcpt}!")
+            st.success(f"✅ Record saved under {t_name.upper()} as receipt {rcpt}!")
         else:
             st.error("Please provide non-zero amounts before saving.")
 
@@ -185,9 +190,8 @@ with tab_cashier:
 with tab_admin:
     st.title("⚙️ Operations Configuration & History View")
     
-    # A New Config Sub-Section to control price alterations
-    with st.expander("📝 Update Weekly Commercial Market Price Tiers", expanded=False):
-        st.subheader("Weekly Fuel Rate Dashboard Manager")
-        col_p1, col_p2 = st.columns(2)
-        with col_p1:
-            new_petrol_rate = st.number_input("Set Current Petrol Base Price (RM)", min_value=0.0, value=MARKET_PETROL, step=0.01, format="%.2f")
+    # 7-Day Cycle Scheduler Splits
+    with st.expander("📝 Update Weekly Commercial Market Price Tiers", expanded=True):
+        st.subheader("Split Weekly Fuel Rate Schedule Settings")
+        
+        # Pre-calculated target block display helper
