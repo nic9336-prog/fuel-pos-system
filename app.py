@@ -2,8 +2,8 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded database architecture to v25 to process direct shift corrections safely
-DB_NAME = 'fuel_station_v25.db'
+# Upgraded to v27 to ensure clean synchronization across all 5 code segments
+DB_NAME = 'fuel_station_v27.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -37,7 +37,7 @@ def get_price_for_date(f_type, d_str):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date", (f_type, d_str[:10]))
     res = c.fetchone(); conn.close()
-    return res if res else (3.37 if f_type == 'petrol' else 3.97)
+    return res[0] if res else (3.37 if f_type == 'petrol' else 3.97)
 
 def update_weekly_price(f_type, s_d, e_d, p):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -47,8 +47,7 @@ def update_weekly_price(f_type, s_d, e_d, p):
 def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT last_id FROM receipt_counter")
-    last_id_row = c.fetchone()
-    last_id = last_id_row if last_id_row else 0
+    last_id = c.fetchone()[0]
     next_id = last_id + 1
     c.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit(); conn.close()
@@ -59,7 +58,7 @@ def get_last_meter_reading(pump_no):
     try:
         c.execute(f"SELECT meter FROM petrol_pump_{pump_no} ORDER BY id DESC LIMIT 1")
         res = c.fetchone()
-        return float(res) if res and res is not None else 0.0
+        return float(res[0]) if res and res[0] is not None else 0.0
     except: return 0.0
     finally: conn.close()
 
@@ -143,7 +142,7 @@ if page == "🛒 Cashier Counter":
         st.markdown("#### 👤 Active Prepaid Balance Verification")
         existing_customers = get_customers()
         if existing_customers:
-            cust_names = [r for r, _ in existing_customers]
+            cust_names = [r[0] for r in existing_customers]
             chosen_customer = st.selectbox("Select Account Customer", cust_names)
             current_wallet_credit = next(b for n, b in existing_customers if n == chosen_customer)
             if current_wallet_credit < dibayar_rm: st.error(f"❌ **INSUFFICIENT STATION CREDIT!** Balance is RM {current_wallet_credit:.2f}.")
@@ -209,7 +208,7 @@ elif page == "👤 AC Customer Wallet Manager":
         st.subheader("💵 Log Advance Cash Payment (Top-Up)")
         customer_list_raw = get_customers()
         if customer_list_raw:
-            customer_list = [n for n, _ in customer_list_raw]
+            customer_list = [n[0] for n in customer_list_raw]
             target_topup = st.selectbox("Select Client Target Account", customer_list)
             topup_amt = st.number_input("Cash Payment Top-Up Received (RM)", min_value=1.0, step=10.0, format="%.2f")
             if st.form_submit_button("Confirm Payment Top-Up"):
@@ -233,33 +232,23 @@ elif page == "🔏 Shift Settlement Desk":
     
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
+    active_tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
     
     for i in (2, 4, 6, 7):
-        try:
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Cash'")
-            sys_cash += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Credit Card'")
-            sys_cc += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='QR Pay'")
-            sys_qr += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'")
-            sys_ac += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM petrol_pump_{i}")
-            sys_cash -= float(c.fetchone()[0])
-        except: pass
+        if f"petrol_pump_{i}" in active_tables:
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Cash'"); sys_cash += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Credit Card'"); sys_cc += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='QR Pay'"); sys_qr += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'"); sys_ac += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM petrol_pump_{i}"); sys_cash -= float(c.fetchone()[0])
         
     for i in (1, 3, 5, 8):
-        try:
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Cash'")
-            sys_cash += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Credit Card'")
-            sys_cc += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='QR Pay'")
-            sys_qr += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'")
-            sys_ac += float(c.fetchone()[0])
-            c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}")
-            sys_cash -= float(c.fetchone()[0])
+        if f"diesel_pump_{i}" in active_tables:
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Cash'"); sys_cash += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Credit Card'"); sys_cc += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='QR Pay'"); sys_qr += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'"); sys_ac += float(c.fetchone()[0])
+            c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}"); sys_cash -= float(c.fetchone()[0])
     conn.close()
 
     with st.expander("🛠️ Open Supervisor Data Override & Correction Terminal", expanded=False):
@@ -269,10 +258,11 @@ elif page == "🔏 Shift Settlement Desk":
         t_target = f"petrol_pump_{ov_pump}" if ov_fuel == "Petrol" else f"diesel_pump_{ov_pump}"
         
         conn = sqlite3.connect(DB_NAME); rcpt_list = []
-        try:
-            rcpt_df = pd.read_sql_query(f"SELECT receipt_no FROM {t_target} ORDER BY timestamp DESC", conn)
-            rcpt_list = rcpt_df['receipt_no'].tolist()
-        except: pass
+        if t_target in active_tables:
+            try:
+                rcpt_df = pd.read_sql_query(f"SELECT receipt_no FROM {t_target} ORDER BY timestamp DESC", conn)
+                rcpt_list = rcpt_df['receipt_no'].tolist()
+            except: pass
         conn.close()
         
         if rcpt_list:
@@ -296,13 +286,10 @@ elif page == "🔏 Shift Settlement Desk":
                 
             if st.button("Apply Supervisor Correction Override", type="secondary", use_container_width=True):
                 conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
-                if ov_fuel == "Petrol":
-                    cursor.execute(f"UPDATE {t_target} SET diisi_rm=?, dibayar_rm=?, liter=?, subsidy=?, payment_method=? WHERE receipt_no=?", (new_diisi, calc_paid, calc_lit, calc_sub, new_pay_method, target_rcpt))
-                else:
-                    cursor.execute(f"UPDATE {t_target} SET diisi_rm=?, dibayar_rm=?, liter=?, subsidy=?, payment_method=? WHERE receipt_no=?", (new_diisi, calc_paid, calc_lit, calc_sub, new_pay_method, target_rcpt))
+                cursor.execute(f"UPDATE {t_target} SET diisi_rm=?, dibayar_rm=?, liter=?, subsidy=?, payment_method=? WHERE receipt_no=?", (new_diisi, calc_paid, calc_lit, calc_sub, new_pay_method, target_rcpt))
                 conn.commit(); conn.close()
                 st.success(f"📊 Modified entry {target_rcpt} successfully!"); st.rerun()
-        else: st.info("No logs saved under this pump unit yet.")
+        else: st.info("No transaction logs recorded under this pump yet.")
 
     st.subheader("📝 Supervisor Shift Entry Closing Form")
     sv_name = st.text_input("Enter Supervisor Name")
@@ -367,19 +354,22 @@ else:
     end_filter = dt_col2.date_input("End Date Filter", pc_now.date())
     s_filter_str = start_filter.strftime("%Y-%m-%d 00:00:00"); e_filter_str = end_filter.strftime("%Y-%m-%d 23:59:59")
     
+    conn = sqlite3.connect(DB_NAME); c = conn.cursor(); active_tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")]; conn.close()
     conn = sqlite3.connect(DB_NAME); all_rows = []
-    for p_no in (2, 4, 6, 7):
-        try:
-            df_tmp = pd.read_sql_query(f"SELECT * FROM petrol_pump_{p_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
-            if not df_tmp.empty: df_tmp['Fuel Type'] = 'Petrol'; df_tmp['Pump No'] = p_no; all_rows.append(df_tmp)
-        except: pass
-    for d_no in (1, 3, 5, 8):
-        try:
-            df_tmp = pd.read_sql_query(f"SELECT * FROM diesel_pump_{d_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
-            if not df_tmp.empty:
-                df_tmp['Fuel Type'] = 'Diesel'; df_tmp['Pump No'] = d_no
-                df_tmp = df_tmp.rename(columns={'verification_check': 'subsidy'}); all_rows.append(df_tmp)
-        except: pass
+    for i in (2, 4, 6, 7):
+        if f"petrol_pump_{i}" in active_tables:
+            try:
+                df_tmp = pd.read_sql_query(f"SELECT * FROM petrol_pump_{i} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
+                if not df_tmp.empty: df_tmp['Fuel Type'] = 'Petrol'; df_tmp['Pump No'] = i; all_rows.append(df_tmp)
+            except: pass
+    for i in (1, 3, 5, 8):
+        if f"diesel_pump_{i}" in active_tables:
+            try:
+                df_tmp = pd.read_sql_query(f"SELECT * FROM diesel_pump_{i} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
+                if not df_tmp.empty:
+                    df_tmp['Fuel Type'] = 'Diesel'; df_tmp['Pump No'] = i
+                    df_tmp = df_tmp.rename(columns={'verification_check': 'subsidy'}); all_rows.append(df_tmp)
+            except: pass
     conn.close()
     if all_rows:
         master_df = pd.concat(all_rows, ignore_index=True).sort_values(by=['Pump No', 'timestamp'], ascending=[True, True])
