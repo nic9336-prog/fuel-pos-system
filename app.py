@@ -2,8 +2,8 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded to v27 to ensure clean synchronization across all 5 code segments
-DB_NAME = 'fuel_station_v27.db'
+# Upgraded to v28 to deploy the safe receipt fallback sequence securely
+DB_NAME = 'fuel_station_v28.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -37,7 +37,7 @@ def get_price_for_date(f_type, d_str):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date", (f_type, d_str[:10]))
     res = c.fetchone(); conn.close()
-    return res[0] if res else (3.37 if f_type == 'petrol' else 3.97)
+    return res if res else (3.37 if f_type == 'petrol' else 3.97)
 
 def update_weekly_price(f_type, s_d, e_d, p):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -47,9 +47,11 @@ def update_weekly_price(f_type, s_d, e_d, p):
 def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT last_id FROM receipt_counter")
-    last_id = c.fetchone()[0]
+    last_id_row = c.fetchone()
+    # Complete fix applied here: added defensive extraction logic to prevent None indexing errors
+    last_id = last_id_row[0] if last_id_row else 0
     next_id = last_id + 1
-    c.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
+    c.execute("INSERT OR REPLACE INTO receipt_counter (last_id) VALUES (?)", (next_id,))
     conn.commit(); conn.close()
     return f"{prefix}-{next_id:06d}"
 
@@ -376,4 +378,4 @@ else:
         ordered_cols = ['Pump No', 'Fuel Type', 'receipt_no', 'timestamp', 'diisi_rm', 'dibayar_rm', 'harga', 'liter', 'subsidy', 'payment_method', 'customer_name', 'original_prepaid', 'cash_refund']
         master_df = master_df[ordered_cols]
         st.dataframe(master_df, use_container_width=True)
-        st.download_button(label="📥 Download Sorted Consolidated CSV", data=master_df.to_csv(index=False).encode('utf-8'), file_name=f"station_master_report_{start_filter}_to_{end_filter}.csv", mime='text/csv', use_container_width=True)
+        st.download_button(label="📥 Download Sorted Consolidated CSV", data=master_df.to_csv(index=False).encode('utf-8'), file_name="station_master_report.csv", mime='text/csv', use_container_width=True)
