@@ -2,20 +2,30 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_v15.db'
+# Upgraded to v17 to support shift settlement history logging tables securely
+DB_NAME = 'fuel_station_v17.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     for i in (2, 4, 6, 7):
         c.execute(f'''CREATE TABLE IF NOT EXISTS petrol_pump_{i} (
             id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, 
-            diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL, customer_name TEXT)''')
+            diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL, 
+            customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
     for i in (1, 3, 5, 8):
         c.execute(f'''CREATE TABLE IF NOT EXISTS diesel_pump_{i} (
             id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, 
-            diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL, customer_name TEXT)''')
+            diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL, 
+            customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
     c.execute('CREATE TABLE IF NOT EXISTS config_prices (fuel_type TEXT, start_date TEXT, end_date TEXT, commercial_price REAL, PRIMARY KEY (fuel_type, start_date))')
     c.execute('CREATE TABLE IF NOT EXISTS account_customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, credit_balance REAL DEFAULT 0.0, created_at TEXT)')
+    
+    # Dedicated database tracking table for Shift Settlement Closing Logs
+    c.execute('''CREATE TABLE IF NOT EXISTS shift_settlements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, supervisor_name TEXT,
+        sys_cash REAL, phys_cash REAL, var_cash REAL, sys_cc REAL, phys_cc REAL, var_cc REAL,
+        sys_qr REAL, phys_qr REAL, var_qr REAL, sys_ac REAL, phys_ac REAL, var_ac REAL)''')
+        
     c.execute("SELECT COUNT(*) FROM config_prices")
     if c.fetchone() == 0:
         c.executemany("INSERT INTO config_prices VALUES (?,?,?,?)", [
@@ -87,7 +97,7 @@ active_market_petrol = get_price_for_date('petrol', current_date_str)
 active_market_diesel = get_price_for_date('diesel', current_date_str)
 
 st.sidebar.title("Compass Navigation")
-page = st.sidebar.radio("Go to:", ["🛒 Cashier Counter", "👤 AC Customer Wallet Manager", "📊 Admin Reporting & Prices"])
+page = st.sidebar.radio("Go to:", ["🛒 Cashier Counter", "👤 AC Customer Wallet Manager", "🔏 Shift Settlement Desk", "📊 Admin Reporting & Prices"])
 if page == "🛒 Cashier Counter":
     st.title("🛒 Fuel Cashier Terminal")
     st.caption(f"🕒 **System Clock:** {pc_now.strftime('%A, %d %B %Y | %I:%M:%S %p')}")
@@ -96,20 +106,20 @@ if page == "🛒 Cashier Counter":
     pump_selection = col2.selectbox("Select Pump", (2, 4, 6, 7) if fuel_category == "Petrol (RON95)" else (1, 3, 5, 8), format_func=lambda x: f"Pump {x}")
     st.markdown("---"); col_in1, col_in2 = st.columns(2)
     
+    diisi_rm = col_in1.number_input("Diisi (RM) - From Pump Display Screen", min_value=0.0, step=1.0, format="%.2f")
+    
     if fuel_category == "Petrol (RON95)":
-        rate_type = col_in1.radio("Pricing Tier", [f"Normal Market (RM {active_market_petrol:.2f})", "Subsidized (RM 1.99)"])
+        rate_type = col_in2.radio("Pricing Tier", [f"Normal Market (RM {active_market_petrol:.2f})", "Subsidized (RM 1.99)"])
         harga_applied = 1.99 if "Subsidized" in rate_type else active_market_petrol
-        liter = col_in1.number_input("LITER Dispensed", min_value=0.0, step=0.001, format="%.3f")
-        diisi_rm = col_in2.number_input("Gross Filled Amount (Diisi RM)", min_value=0.0, step=0.01, format="%.2f")
-        qr_ac = col_in2.number_input("QR / Card Payment (QR/AC)", min_value=0.0, step=0.01, format="%.2f")
+        liter = round(diisi_rm / active_market_petrol, 2) if active_market_petrol > 0 else 0.0
         dibayar_rm = round(harga_applied * liter, 1)
-        subsidy = round(abs((liter * round(active_market_petrol - 1.99, 2)) - qr_ac), 2) if harga_applied == 1.99 else 0.0
+        subsidy_rate = round(active_market_petrol - 1.99, 2)
+        subsidy = round(abs((liter * subsidy_rate) - diisi_rm), 2) if harga_applied == 1.99 else 0.0
         calculated_meter = get_last_meter_reading(pump_selection) + liter
+        v_check = 0.0
     else:
-        diisi_rm = col_in1.number_input("Diisi (RM) - From Pump", min_value=0.0, step=0.01, format="%.2f")
-        rate_type = col_in1.radio("Pricing Tier", [f"Commercial Market (RM {active_market_diesel:.2f})", "Subsidized (RM 2.15)"])
+        rate_type = col_in2.radio("Pricing Tier", [f"Commercial Market (RM {active_market_diesel:.2f})", "Subsidized (RM 2.15)"])
         harga_applied = 2.15 if "Subsidized" in rate_type else active_market_diesel
-        col_in2.info("💡 Litres and Subsidy are calculated automatically from Diisi.")
         liter = round(diisi_rm / active_market_diesel, 2) if active_market_diesel > 0 else 0.0
         if harga_applied == 2.15:
             dibayar_rm = round(liter * 2.15, 2); subsidy = round(diisi_rm - dibayar_rm, 2)
@@ -118,11 +128,20 @@ if page == "🛒 Cashier Counter":
         calculated_meter = 0.0
 
     st.markdown("### 📊 Live Math Summary"); cm1, cm2, cm3 = st.columns(3)
-    cm1.metric("LITER Volume", f"{liter:.3f} L"); cm2.metric("Subsidy Amount", f"RM {subsidy:.2f}"); cm3.metric("DIBAYAR (Amount Due)", f"RM {dibayar_rm:.2f}")
+    cm1.metric("LITER Volume", f"{liter:.2f} L"); cm2.metric("Subsidy Amount", f"RM {subsidy:.2f}"); cm3.metric("DIBAYAR (Amount Due)", f"RM {dibayar_rm:.2f}")
     
     payment_method = st.selectbox("Payment Type Chosen", ["Cash", "Credit Card", "QR Pay", "AC (Account Customer)"])
-    chosen_customer = "-"; current_wallet_credit = 0.0
     
+    is_refund = st.checkbox("🔄 Is there a Card/QR overpayment refund for this sale?")
+    original_prepaid = 0.0; cash_refund = 0.0
+    if is_refund:
+        st.markdown("#### 💵 Overpayment Cash Refund Desk")
+        original_prepaid = st.number_input("Enter Original Prepaid Amount (RM)", min_value=diisi_rm, step=10.0, format="%.2f")
+        cash_refund = round(original_prepaid - dibayar_rm, 2)
+        st.warning(f"💵 **Cash Refund to Customer:** RM {cash_refund:.2f}")
+
+    chosen_customer = "-"
+    current_wallet_credit = 0.0
     if payment_method == "AC (Account Customer)":
         st.markdown("#### 👤 Active Prepaid Balance Verification")
         existing_customers = get_customers()
@@ -130,36 +149,36 @@ if page == "🛒 Cashier Counter":
             cust_names = [r for r, _ in existing_customers]
             chosen_customer = st.selectbox("Select Account Customer", cust_names)
             current_wallet_credit = next(b for n, b in existing_customers if n == chosen_customer)
-            if current_wallet_credit < dibayar_rm:
-                st.error(f"❌ **INSUFFICIENT STATION CREDIT!** Drivers balance is RM {current_wallet_credit:.2f}. Top up required.")
+            if current_wallet_credit < dibayar_rm: st.error(f"❌ **INSUFFICIENT STATION CREDIT!** Balance is RM {current_wallet_credit:.2f}.")
             else: st.success(f"✅ **CREDIT APPROVED:** Balance: RM {current_wallet_credit:.2f}.")
         else: st.warning("No customers registered yet.")
     
     if "print_trigger" not in st.session_state: st.session_state.print_trigger = None
 
     if st.button("Submit Order & Log Record", type="primary", use_container_width=True):
-        if diisi_rm > 0 or liter > 0:
-            if payment_method == "AC (Account Customer)" and current_wallet_credit < dibayar_rm:
-                st.error("Cannot submit transaction. Insufficient credit.")
+        if diisi_rm > 0:
+            if payment_method == "AC (Account Customer)" and current_wallet_credit < dibayar_rm: st.error("Cannot submit transaction. Insufficient credit.")
             else:
                 prefix = "PET" if "Petrol" in fuel_category else "DSL"
                 rcpt = get_next_receipt_number(prefix); now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
                 if prefix == "PET":
-                    cursor.execute(f"INSERT INTO petrol_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, meter, qr_ac, subsidy, customer_name) VALUES (?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, calculated_meter, qr_ac, subsidy, chosen_customer))
+                    cursor.execute(f"INSERT INTO petrol_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, meter, qr_ac, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, calculated_meter, 0.0, subsidy, chosen_customer, original_prepaid, cash_refund))
                 else:
-                    cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, customer_name) VALUES (?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, chosen_customer))
+                    cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, chosen_customer, original_prepaid, cash_refund))
                 conn.commit(); conn.close()
                 if payment_method == "AC (Account Customer)": deduct_customer_credit(chosen_customer, dibayar_rm)
                 
                 b_prc = active_market_petrol if "Petrol" in fuel_category else active_market_diesel
+                refund_receipt_line = f"PREPAID : RM {original_prepaid:.2f}\nCASH REF: RM {cash_refund:.2f}\n" if is_refund else ""
+                
                 receipt_html = f"""
                 <html><body style="font-family:monospace; font-size:12px; width:220px; margin:0; padding:10px;">
                 <div style="text-align:center; font-weight:bold;">========================<br>  MADANI FUEL STATION  <br>========================</div>
                 <br>DATE: {now_time}<br>RECEIPT: {rcpt}<br>PUMP ID: Pump {pump_selection} ({fuel_category})<br>PAYMENT: {payment_method}<br>CLIENT : {chosen_customer}<br>
-                ------------------------<br>VOLUME : {liter:.3f} Litres<br>PRICE  : RM {b_prc:.2f}/L<br>GROSS  : RM {diisi_rm:.2f}<br>
-                ------------------------<br><div style="font-weight:bold;">MADANI SAVINGS: RM -{subsidy:.2f}</div>
-                ------------------------<br><div style="font-size:14px; font-weight:bold; text-align:center;">TOTAL PAID:<br>RM {dibayar_rm:.2f}</div>
+                ------------------------<br>VOLUME : {liter:.2f} Litres<br>PRICE  : RM {b_prc:.2f}/L<br>GROSS  : RM {diisi_rm:.2f}<br>
+                ------------------------<br>{refund_receipt_line}MADANI SAVINGS: RM -{subsidy:.2f}<br>
+                ------------------------<br><div style="font-size:14px; font-weight:bold; text-align:center;">FINAL PAID:<br>RM {dibayar_rm:.2f}</div>
                 ------------------------<br><div style="text-align:center;">Thank You / Terima Kasih<br>Pandu Cermat</div>
                 </body></html>
                 """
@@ -187,8 +206,7 @@ elif page == "👤 AC Customer Wallet Manager":
         new_name = st.text_input("Company or Customer Name")
         initial_pay = st.number_input("Advance Pre-paid Deposit Amount (RM)", min_value=0.0, step=10.0, format="%.2f")
         if st.form_submit_button("Create Customer Profile"):
-            if new_name and add_customer(new_name, initial_pay):
-                st.success(f"Configured ledger profile for {new_name.upper()}!"); st.rerun()
+            if new_name and add_customer(new_name, initial_pay): st.success(f"Configured ledger profile for {new_name.upper()}!"); st.rerun()
             else: st.error("Error creating profile.")
     with adm_col2.form("topup_credit_form", clear_on_submit=True):
         st.subheader("💵 Log Advance Cash Payment (Top-Up)")
@@ -212,7 +230,54 @@ elif page == "👤 AC Customer Wallet Manager":
         final_report.append({"Customer Name": name, "Current Balance (RM)": round(bal, 2), "Total Fuel Litres Pumped": round(total_lit, 2), "Total Fuel Expenditures (RM)": round(total_spent, 2), "Account Status": status})
     conn.close()
     if final_report: st.dataframe(pd.DataFrame(final_report), use_container_width=True)
-    else: st.info("No customer profiles inside database yet.")
+elif page == "🔏 Shift Settlement Desk":
+    st.title("🔏 Shift Settlement & Counter Audit Desk")
+    st.markdown("---")
+    conn = sqlite3.connect(DB_NAME); sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
+    for i in (2, 4, 6, 7):
+        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0])
+        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0])
+        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0])
+        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0])
+        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM petrol_pump_{i}", conn).fillna(0).iloc[0,0])
+    for i in (1, 3, 5, 8):
+        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0])
+        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0])
+        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0])
+        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0])
+        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM diesel_pump_{i}", conn).fillna(0).iloc[0,0])
+    conn.close()
+
+    st.subheader("📝 Supervisor Shift Entry Closing Form")
+    sv_name = st.text_input("Enter Supervisor Name")
+    col_input1, col_col2 = st.columns(2)
+    phys_cash = col_input1.number_input("Physical Cash Counted Drawer Total (RM)", min_value=0.0, step=10.0, format="%.2f")
+    phys_cc = col_input1.number_input("Physical Credit Card Slips Total Value (RM)", min_value=0.0, step=10.0, format="%.2f")
+    phys_qr = col_col2.number_input("Physical QR/E-Wallet Terminals Settlement (RM)", min_value=0.0, step=10.0, format="%.2f")
+    phys_ac = col_col2.number_input("Physical Corporate AC Delivery Slips Value (RM)", min_value=0.0, step=10.0, format="%.2f")
+
+    v_cash = round(phys_cash - sys_cash, 2); v_cc = round(phys_cc - sys_cc, 2); v_qr = round(phys_qr - sys_qr, 2); v_ac = round(phys_ac - sys_ac, 2)
+    st.markdown("---"); st.subheader("📊 Live Shift Variance Reconciliation Grid")
+    recon_data = [
+        {"Payment Method": "Cash Drawer (Net of Refunds)", "System Expected (RM)": sys_cash, "Supervisor Count (RM)": phys_cash, "Variance (RM)": v_cash},
+        {"Payment Method": "Credit Card Terminal", "System Expected (RM)": sys_cc, "Supervisor Count (RM)": phys_cc, "Variance (RM)": v_cc},
+        {"Payment Method": "QR Pay / E-Wallet", "System Expected (RM)": sys_qr, "Supervisor Count (RM)": phys_qr, "Variance (RM)": v_qr},
+        {"Payment Method": "AC (Account Customer Slips)", "System Expected (RM)": sys_ac, "Supervisor Count (RM)": phys_ac, "Variance (RM)": v_ac}
+    ]
+    df_recon = pd.DataFrame(recon_data)
+    
+    def color_variance(val):
+        if val < 0: return 'background-color: #ffcccc; color: #cc0000; font-weight: bold'
+        elif val > 0: return 'background-color: #c9f7f5; color: #277973; font-weight: bold'
+        return 'background-color: #e2f0d9; color: #2e75b6;'
+    st.dataframe(df_recon.style.map(color_variance, subset=['Variance (RM)']), use_container_width=True)
+
+    if st.button("Commit & Lock Shift Proceed Settlement Report", type="primary", use_container_width=True):
+        if sv_name:
+            conn = sqlite3.connect(DB_NAME); cursor = conn.cursor()
+            cursor.execute('''INSERT INTO shift_settlements (timestamp, supervisor_name, sys_cash, phys_cash, var_cash, sys_cc, phys_cc, var_cc, sys_qr, phys_qr, var_qr, sys_ac, phys_ac, var_ac) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sv_name, sys_cash, phys_cash, v_cash, sys_cc, phys_cc, v_cc, sys_qr, phys_qr, v_qr, sys_ac, phys_ac, v_ac))
+            conn.commit(); conn.close(); st.success("✅ Shift settlement successfully locked into admin logs!"); st.rerun()
+        else: st.error("Please enter Supervisor Name.")
 
 else:
     st.title("⚙️ Operations Configuration & History View")
@@ -220,7 +285,6 @@ else:
     base_9_july = datetime(2026, 7, 9); days_since = (datetime.now() - base_9_july).days
     current_cycle_week = days_since // 7 if days_since >= 0 else -1
     default_start, default_end = ((base_9_july + timedelta(days=current_cycle_week*7)).strftime('%Y-%m-%d'), (base_9_july + timedelta(days=current_cycle_week*7+6)).strftime('%Y-%m-%d')) if current_cycle_week >= 0 else ("2026-07-01", "2026-07-08")
-    st.info(f"📅 **Active Auto-Detected Cycle Block:** {default_start} to {default_end}")
     col_setup1, col_setup2 = st.columns(2)
     p_start = col_setup1.text_input("Petrol Start Date (YYYY-MM-DD)", value=default_start, key="p_start")
     p_end = col_setup1.text_input("Petrol End Date (YYYY-MM-DD)", value=default_end, key="p_end")
@@ -236,71 +300,36 @@ else:
     conn = sqlite3.connect(DB_NAME); df_prices = pd.read_sql_query("SELECT fuel_type, start_date, end_date, commercial_price FROM config_prices ORDER BY start_date DESC", conn); conn.close()
     if not df_prices.empty: st.dataframe(df_prices, use_container_width=True)
     
-    # === NEW MASTER EXTRACTOR & DATE INTERVAL CHRONO SHIFT AUDITOR ===
-    st.markdown("---"); st.subheader("📋 Consolidated Station Pump Extract Engine")
+    st.markdown("---"); st.subheader("📋 Locked Shift Settlement Proceed Reports History")
+    conn = sqlite3.connect(DB_NAME); df_settle = pd.read_sql_query("SELECT * FROM shift_settlements ORDER BY id DESC", conn); conn.close()
+    if not df_settle.empty:
+        st.dataframe(df_settle, use_container_width=True)
+        st.download_button(label="📥 Download Shift Settlement History CSV", data=df_settle.to_csv(index=False).encode('utf-8'), file_name="shift_settlements_history.csv", mime='text/csv', use_container_width=True)
     
-    # 1. Date selector inputs
-    st.markdown("#### 📅 Select Log Extraction Filter Range")
+    st.markdown("---"); st.subheader("📋 Consolidated Station Pump Extract Engine")
     dt_col1, dt_col2 = st.columns(2)
     start_filter = dt_col1.date_input("Start Date Filter", pc_now.date() - timedelta(days=7))
     end_filter = dt_col2.date_input("End Date Filter", pc_now.date())
+    s_filter_str = start_filter.strftime("%Y-%m-%d 00:00:00"); e_filter_str = end_filter.strftime("%Y-%m-%d 23:59:59")
     
-    # Convert dates to raw safe lookup strings matching SQLite logs formats
-    s_filter_str = start_filter.strftime("%Y-%m-%d 00:00:00")
-    e_filter_str = end_filter.strftime("%Y-%m-%d 23:59:59")
-    
-    # 2. Compile Master Dataset
-    conn = sqlite3.connect(DB_NAME)
-    all_rows = []
-    
-    # Fetch across all Petrol configurations
+    conn = sqlite3.connect(DB_NAME); all_rows = []
     for p_no in (2, 4, 6, 7):
         try:
-            query = f"SELECT * FROM petrol_pump_{p_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'"
-            df_tmp = pd.read_sql_query(query, conn)
-            if not df_tmp.empty:
-                df_tmp['Fuel Type'] = 'Petrol'
-                df_tmp['Pump No'] = p_no
-                all_rows.append(df_tmp)
+            df_tmp = pd.read_sql_query(f"SELECT * FROM petrol_pump_{p_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
+            if not df_tmp.empty: df_tmp['Fuel Type'] = 'Petrol'; df_tmp['Pump No'] = p_no; all_rows.append(df_tmp)
         except: pass
-        
-    # Fetch across all Diesel configurations
     for d_no in (1, 3, 5, 8):
         try:
-            query = f"SELECT * FROM diesel_pump_{d_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'"
-            df_tmp = pd.read_sql_query(query, conn)
+            df_tmp = pd.read_sql_query(f"SELECT * FROM diesel_pump_{d_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'", conn)
             if not df_tmp.empty:
-                df_tmp['Fuel Type'] = 'Diesel'
-                df_tmp['Pump No'] = d_no
-                # Map Diesel columns to align layout smoothly with Petrol matrix grids
+                df_tmp['Fuel Type'] = 'Diesel'; df_tmp['Pump No'] = d_no
                 df_tmp = df_tmp.rename(columns={'verification_check': 'meter'})
-                df_tmp['qr_ac'] = 0.0 # Placeholder matching Petrol layout schemas
-                all_rows.append(df_tmp)
+                df_tmp['qr_ac'] = 0.0; all_rows.append(df_tmp)
         except: pass
-        
     conn.close()
-    
     if all_rows:
-        # Merge datasets together into a single master sheet
-        master_df = pd.concat(all_rows, ignore_index=True)
-        
-        # Sort sequentially: Sorted by Pump ID number ascending, then timestamp chronological order
-        master_df = master_df.sort_values(by=['Pump No', 'timestamp'], ascending=[True, True])
-        
-        # Re-arrange standard columns cleanly for export view
-        ordered_cols = ['Pump No', 'Fuel Type', 'receipt_no', 'timestamp', 'diisi_rm', 'dibayar_rm', 'harga', 'liter', 'meter', 'qr_ac', 'subsidy', 'customer_name']
+        master_df = pd.concat(all_rows, ignore_index=True).sort_values(by=['Pump No', 'timestamp'], ascending=[True, True])
+        ordered_cols = ['Pump No', 'Fuel Type', 'receipt_no', 'timestamp', 'diisi_rm', 'dibayar_rm', 'harga', 'liter', 'meter', 'qr_ac', 'subsidy', 'customer_name', 'original_prepaid', 'cash_refund']
         master_df = master_df[ordered_cols]
-        
-        # Show master table preview
         st.dataframe(master_df, use_container_width=True)
-        
-        # Download Master Excel CSV Sheet
-        st.download_button(
-            label=f"📥 Download Sorted Consolidated CSV ({start_filter.strftime('%d %b')} to {end_filter.strftime('%d %b')})",
-            data=master_df.to_csv(index=False).encode('utf-8'),
-            file_name=f"station_master_report_{start_filter}_to_{end_filter}.csv",
-            mime='text/csv',
-            use_container_width=True
-        )
-    else:
-        st.info("No sales transactions logged across any pumps within this specific date range filter block yet.")
+        st.download_button(label="📥 Download Sorted Consolidated CSV", data=master_df.to_csv(index=False).encode('utf-8'), file_name=f"station_master_report_{start_filter}_to_{end_filter}.csv", mime='text/csv', use_container_width=True)
