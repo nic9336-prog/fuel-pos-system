@@ -4,13 +4,14 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_master.db'
+# Changed to v2 to clear out old database structure conflicts
+DB_NAME = 'fuel_station_v2.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Create specific custom pump tables manually to avoid formatting strip crashes
+    # 1. Create specific custom pump tables manually
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
@@ -21,7 +22,7 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_5 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_8 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     
-    # 2. Expanded Price History tracking schema
+    # 2. Price History tracking schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS config_prices (
             fuel_type TEXT,
@@ -34,7 +35,7 @@ def init_db():
     
     # Pre-populate baseline history matching your actual schedule structure
     cursor.execute("SELECT COUNT(*) FROM config_prices")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO config_prices VALUES ('petrol', '2026-07-01', '2026-07-08', 3.37)")
         cursor.execute("INSERT INTO config_prices VALUES ('diesel', '2026-07-01', '2026-07-08', 3.97)")
         cursor.execute("INSERT INTO config_prices VALUES ('petrol', '2026-07-09', '2026-07-15', 3.37)")
@@ -42,7 +43,7 @@ def init_db():
         
     cursor.execute('CREATE TABLE IF NOT EXISTS receipt_counter (last_id INTEGER PRIMARY KEY)')
     cursor.execute("SELECT COUNT(*) FROM receipt_counter")
-    if cursor.fetchone()[0] == 0:
+    if cursor.fetchone() == 0:
         cursor.execute("INSERT INTO receipt_counter (last_id) VALUES (0)")
     conn.commit()
     conn.close()
@@ -56,7 +57,9 @@ def get_price_for_date(fuel_type, date_str):
     )
     res = cursor.fetchone()
     conn.close()
-    return res[0] if res else (3.37 if fuel_type == 'petrol' else 3.97)
+    if res:
+        return res[0]
+    return 3.37 if fuel_type == 'petrol' else 3.97
 
 def update_weekly_price(fuel_type, start_date, end_date, price):
     conn = sqlite3.connect(DB_NAME)
@@ -194,4 +197,3 @@ with tab_admin:
     with st.expander("📝 Update Weekly Commercial Market Price Tiers", expanded=True):
         st.subheader("Split Weekly Fuel Rate Schedule Settings")
         
-        # Pre-calculated target block display helper
