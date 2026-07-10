@@ -2,8 +2,8 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded to v22 to deploy the crash-proof table check safely
-DB_NAME = 'fuel_station_v22.db'
+# Upgraded to v23 to deploy the database unpack patch safely
+DB_NAME = 'fuel_station_v23.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -37,7 +37,7 @@ def get_price_for_date(f_type, d_str):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date", (f_type, d_str[:10]))
     res = c.fetchone(); conn.close()
-    return res if res else (3.37 if f_type == 'petrol' else 3.97)
+    return res[0] if res else (3.37 if f_type == 'petrol' else 3.97)
 
 def update_weekly_price(f_type, s_d, e_d, p):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -48,7 +48,7 @@ def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT last_id FROM receipt_counter")
     last_id_row = c.fetchone()
-    last_id = last_id_row if last_id_row else 0
+    last_id = last_id_row[0] if last_id_row else 0
     next_id = last_id + 1
     c.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit(); conn.close()
@@ -59,7 +59,8 @@ def get_last_meter_reading(pump_no):
     try:
         c.execute(f"SELECT meter FROM petrol_pump_{pump_no} ORDER BY id DESC LIMIT 1")
         res = c.fetchone()
-        return res if res else 0.0
+        # Complete fix applied here: added index lookup extraction [0] to unpack the number safely from tuple
+        return float(res[0]) if res and res[0] is not None else 0.0
     except: return 0.0
     finally: conn.close()
 
@@ -234,33 +235,32 @@ elif page == "🔏 Shift Settlement Desk":
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
     
-    # Safe try-except wrap blocks applied to verify initialization and drop 0.0 on blank table states cleanly
     for i in (2, 4, 6, 7):
         try:
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Cash'")
-            sys_cash += float(c.fetchone())
+            sys_cash += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Credit Card'")
-            sys_cc += float(c.fetchone())
+            sys_cc += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='QR Pay'")
-            sys_qr += float(c.fetchone())
+            sys_qr += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'")
-            sys_ac += float(c.fetchone())
+            sys_ac += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM petrol_pump_{i}")
-            sys_cash -= float(c.fetchone())
+            sys_cash -= float(c.fetchone()[0])
         except: pass
         
     for i in (1, 3, 5, 8):
         try:
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Cash'")
-            sys_cash += float(c.fetchone())
+            sys_cash += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Credit Card'")
-            sys_cc += float(c.fetchone())
+            sys_cc += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='QR Pay'")
-            sys_qr += float(c.fetchone())
+            sys_qr += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'")
-            sys_ac += float(c.fetchone())
+            sys_ac += float(c.fetchone()[0])
             c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}")
-            sys_cash -= float(c.fetchone())
+            sys_cash -= float(c.fetchone()[0])
         except: pass
     conn.close()
 
