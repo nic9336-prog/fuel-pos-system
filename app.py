@@ -10,31 +10,21 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Create specific custom tables for your specific layout
-    # Petrol Pumps: 2, 4, 6, 7
-for i in:
-        cursor.execute(f'''
-            CREATE TABLE IF NOT EXISTS petrol_pump_{i} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT,
-                diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL
-            )
-        ''')
-    # Diesel Pumps: 1, 3, 5, 8
-for i in:
-        cursor.execute(f'''
-            CREATE TABLE IF NOT EXISTS diesel_pump_{i} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT,
-                diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL
-            )
-        ''')
+    # Created manually without using list loops to prevent syntax errors
+    # Create Petrol Pump tables
+    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_7 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     
-    # 2. Add System Price Settings table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS config_prices (
-            fuel_type TEXT PRIMARY KEY,
-            commercial_price REAL
-        )
-    ''')
+    # Create Diesel Pump tables
+    cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_1 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_3 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_5 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_8 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
+    
+    # System Price Settings table
+    cursor.execute('CREATE TABLE IF NOT EXISTS config_prices (fuel_type TEXT PRIMARY KEY, commercial_price REAL)')
     
     # Set starting default values if table is blank
     cursor.execute("SELECT COUNT(*) FROM config_prices")
@@ -68,7 +58,8 @@ def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT last_id FROM receipt_counter")
-    last_id = cursor.fetchone()[0]
+    last_id_row = cursor.fetchone()
+    last_id = last_id_row[0] if last_id_row else 0
     next_id = last_id + 1
     cursor.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit()
@@ -111,12 +102,11 @@ with tab_cashier:
     with col_config1:
         fuel_category = st.selectbox("Select Fuel Type", ["Petrol (RON95)", "Diesel"])
     with col_config2:
-        # Dynamically change the available pump list selection depending on chosen fuel type
+        # Custom non-sequential pump numbers explicitly split text-style to protect database routing
         if fuel_category == "Petrol (RON95)":
-            pump_options = [2, 4, 6, 7]
+            pump_selection = st.selectbox("Select Pump", [2, 4, 6, 7], format_func=lambda x: f"Pump {x}")
         else:
-            pump_options = [1, 3, 5, 8]
-        pump_selection = st.selectbox("Select Pump", pump_options)
+            pump_selection = st.selectbox("Select Pump", [1, 3, 5, 8], format_func=lambda x: f"Pump {x}")
         
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
@@ -201,27 +191,3 @@ with tab_admin:
         col_p1, col_p2 = st.columns(2)
         with col_p1:
             new_petrol_rate = st.number_input("Set Current Petrol Base Price (RM)", min_value=0.0, value=MARKET_PETROL, step=0.01, format="%.2f")
-            if st.button("Save New Petrol Base Rate"):
-                update_price('petrol', new_petrol_rate)
-                st.success("Petrol pricing updated successfully! Page reloading...")
-                st.rerun()
-        with col_p2:
-            new_diesel_rate = st.number_input("Set Current Diesel Base Price (RM)", min_value=0.0, value=MARKET_DIESEL, step=0.01, format="%.2f")
-            if st.button("Save New Diesel Base Rate"):
-                update_price('diesel', new_diesel_rate)
-                st.success("Diesel pricing updated successfully! Page reloading...")
-                st.rerun()
-
-    st.markdown("---")
-    st.subheader("📋 Historical Shift Transaction Tables Log Ledger")
-    view_fuel = st.radio("Select View Category", ["Petrol Log Matrix", "Diesel Log Matrix"], horizontal=True)
-    
-    if "Petrol" in view_fuel:
-        view_pump = st.selectbox("Select Pump Target Table", [2, 4, 6, 7], format_func=lambda x: f"Pump {x}")
-        target_table = f"petrol_pump_{view_pump}"
-    else:
-        view_pump = st.selectbox("Select Pump Target Table", [1, 3, 5, 8], format_func=lambda x: f"Pump {x}")
-        target_table = f"diesel_pump_{view_pump}"
-    
-    conn = sqlite3.connect(DB_NAME)
-    try:
