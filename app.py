@@ -4,7 +4,7 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_v3.db'
+DB_NAME = 'fuel_station_v4.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -13,7 +13,7 @@ def init_db():
     # Create specific custom pump tables manually 
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
-    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER独立 PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_7 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_1 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
@@ -107,7 +107,7 @@ active_market_petrol = get_price_for_date('petrol', current_date_str)
 active_market_diesel = get_price_for_date('diesel', current_date_str)
 
 # Clean Navigation Sidebar 
-st.sidebar.title("🧭 Station Navigation")
+st.sidebar.title("Commpass Navigation")
 page = st.sidebar.radio("Go to:", ["🛒 Cashier Counter", "📊 Admin Reporting & Prices"])
 
 # ================= PAGE 1: CASHIER COUNTER =================
@@ -198,4 +198,4 @@ if page == "🛒 Cashier Counter":
 else:
     st.title("⚙️ Operations Configuration & History View")
     
-    # 7-Day Cycle Scheduler Splits
+    st.markdown("---")
