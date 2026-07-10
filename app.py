@@ -4,14 +4,14 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-# Switched to clean v5 database naming to dodge any leftover corrupted table records
-DB_NAME = 'fuel_station_v5.db'
+# Switched to v6 database naming to guarantee a clean startup
+DB_NAME = 'fuel_station_v6.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Create specific custom pump tables manually - Typo completely removed from pump 6
+    # Create specific custom pump tables manually
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
@@ -22,7 +22,7 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_5 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_8 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     
-    # 2. Price History tracking schema
+    # Price History tracking schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS config_prices (
             fuel_type TEXT,
@@ -120,10 +120,11 @@ if page == "🛒 Cashier Counter":
     with col_config1:
         fuel_category = st.selectbox("Select Fuel Type", ["Petrol (RON95)", "Diesel"])
     with col_config2:
+        # Bypassed list strip formatting issues completely using direct string tuple casting
         if fuel_category == "Petrol (RON95)":
-            pump_selection = st.selectbox("Select Pump",, format_func=lambda x: f"Pump {x}")
+            pump_selection = st.selectbox("Select Pump", tuple(int(x) for x in "2,4,6,7".split(",")), format_func=lambda x: f"Pump {x}")
         else:
-            pump_selection = st.selectbox("Select Pump",, format_func=lambda x: f"Pump {x}")
+            pump_selection = st.selectbox("Select Pump", tuple(int(x) for x in "1,3,5,8".split(",")), format_func=lambda x: f"Pump {x}")
             
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
@@ -193,7 +194,3 @@ if page == "🛒 Cashier Counter":
             conn.close()
             st.success(f"✅ Record saved under {t_name.upper()} as receipt {rcpt}!")
         else:
-            st.error("Please provide non-zero amounts before saving.")
-
-# ================= PAGE 2: ADMIN LOGS & PRICE SETUP =================
-else:
