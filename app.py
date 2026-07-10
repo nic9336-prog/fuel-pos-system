@@ -72,7 +72,7 @@ with tab_cashier:
     with col_config1:
         fuel_category = st.selectbox("Select Fuel Type", ["Petrol (RON95)", "Diesel"])
     with col_config2:
-        pump_selection = st.selectbox("Select Pump",)
+        pump_selection = st.selectbox("Select Pump", [1, 2, 3, 4])
         
     st.markdown("---")
     
