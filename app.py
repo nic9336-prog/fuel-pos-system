@@ -4,14 +4,13 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-# Kept as v2 to preserve any testing records you just logged
-DB_NAME = 'fuel_station_v2.db'
+DB_NAME = 'fuel_station_v3.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Create specific custom pump tables manually
+    # Create specific custom pump tables manually 
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_2 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_4 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS petrol_pump_6 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, meter REAL, qr_ac REAL, subsidy REAL)')
@@ -22,7 +21,7 @@ def init_db():
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_5 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     cursor.execute('CREATE TABLE IF NOT EXISTS diesel_pump_8 (id INTEGER PRIMARY KEY AUTOINCREMENT, receipt_no TEXT, timestamp TEXT, diisi_rm REAL, dibayar_rm REAL, harga REAL, liter REAL, verification_check REAL, subsidy REAL)')
     
-    # 2. Price History tracking schema
+    # Price History tracking schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS config_prices (
             fuel_type TEXT,
@@ -98,7 +97,6 @@ def get_last_meter_reading(pump_no):
 init_db()
 
 st.set_page_config(page_title="Station POS & Admin Suite", layout="wide")
-tab_cashier, tab_admin = st.tabs(["🛒 Cashier Counter", "📊 Admin Reporting & Setup Dashboard"])
 
 # Get current system date for processing
 pc_now = datetime.now()
@@ -108,8 +106,12 @@ current_date_str = pc_now.strftime('%Y-%m-%d')
 active_market_petrol = get_price_for_date('petrol', current_date_str)
 active_market_diesel = get_price_for_date('diesel', current_date_str)
 
-# ================= TAB 1: CASHIER COUNTER =================
-with tab_cashier:
+# Clean Navigation Sidebar 
+st.sidebar.title("🧭 Station Navigation")
+page = st.sidebar.radio("Go to:", ["🛒 Cashier Counter", "📊 Admin Reporting & Prices"])
+
+# ================= PAGE 1: CASHIER COUNTER =================
+if page == "🛒 Cashier Counter":
     st.title("⛽ Fuel Transaction Terminal")
     st.caption(f"🕒 **Computer Clock Sync:** {pc_now.strftime('%A, %d %B %Y | %I:%M:%S %p')}")
     
@@ -119,10 +121,8 @@ with tab_cashier:
     with col_config2:
         if fuel_category == "Petrol (RON95)":
             pump_selection = st.selectbox("Select Pump", [2, 4, 6, 7], format_func=lambda x: f"Pump {x}")
-            harga = active_market_petrol
         else:
             pump_selection = st.selectbox("Select Pump", [1, 3, 5, 8], format_func=lambda x: f"Pump {x}")
-            harga = active_market_diesel
             
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
@@ -191,9 +191,11 @@ with tab_cashier:
             conn.commit()
             conn.close()
             st.success(f"✅ Record saved under {t_name.upper()} as receipt {rcpt}!")
-            st.rerun()
         else:
             st.error("Please provide non-zero amounts before saving.")
 
-# ================= TAB 2: ADMIN LOGS & PRICE SETUP =================
-with tab_admin:
+# ================= PAGE 2: ADMIN LOGS & PRICE SETUP =================
+else:
+    st.title("⚙️ Operations Configuration & History View")
+    
+    # 7-Day Cycle Scheduler Splits
