@@ -4,8 +4,8 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-# Switched to v6 database naming to guarantee a clean startup
-DB_NAME = 'fuel_station_v6.db'
+# Using v7 to ensure a clean database build free of old structural conflicts
+DB_NAME = 'fuel_station_v7.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -58,7 +58,7 @@ def get_price_for_date(fuel_type, date_str):
     res = cursor.fetchone()
     conn.close()
     if res:
-        return res
+        return res[0]
     return 3.37 if fuel_type == 'petrol' else 3.97
 
 def update_weekly_price(fuel_type, start_date, end_date, price):
@@ -76,7 +76,7 @@ def get_next_receipt_number(prefix):
     cursor = conn.cursor()
     cursor.execute("SELECT last_id FROM receipt_counter")
     last_id_row = cursor.fetchone()
-    last_id = last_id_row if last_id_row else 0
+    last_id = last_id_row[0] if last_id_row else 0
     next_id = last_id + 1
     cursor.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit()
@@ -89,7 +89,7 @@ def get_last_meter_reading(pump_no):
     try:
         cursor.execute(f"SELECT meter FROM petrol_pump_{pump_no} ORDER BY id DESC LIMIT 1")
         result = cursor.fetchone()
-        return result if result else 0.0
+        return result[0] if result else 0.0
     except:
         return 0.0
     finally:
@@ -120,11 +120,10 @@ if page == "🛒 Cashier Counter":
     with col_config1:
         fuel_category = st.selectbox("Select Fuel Type", ["Petrol (RON95)", "Diesel"])
     with col_config2:
-        # Bypassed list strip formatting issues completely using direct string tuple casting
         if fuel_category == "Petrol (RON95)":
-            pump_selection = st.selectbox("Select Pump", tuple(int(x) for x in "2,4,6,7".split(",")), format_func=lambda x: f"Pump {x}")
+            pump_selection = st.selectbox("Select Pump", (2, 4, 6, 7), format_func=lambda x: f"Pump {x}")
         else:
-            pump_selection = st.selectbox("Select Pump", tuple(int(x) for x in "1,3,5,8".split(",")), format_func=lambda x: f"Pump {x}")
+            pump_selection = st.selectbox("Select Pump", (1, 3, 5, 8), format_func=lambda x: f"Pump {x}")
             
     st.markdown("---")
     col_in1, col_in2 = st.columns(2)
@@ -194,3 +193,7 @@ if page == "🛒 Cashier Counter":
             conn.close()
             st.success(f"✅ Record saved under {t_name.upper()} as receipt {rcpt}!")
         else:
+            st.error("Please provide non-zero amounts before saving.")
+
+# ================= PAGE 2: ADMIN LOGS & PRICE SETUP =================
+else:
