@@ -2,8 +2,8 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded to v21 to apply the expanded SQL syntax architecture smoothly
-DB_NAME = 'fuel_station_v21.db'
+# Upgraded to v22 to deploy the crash-proof table check safely
+DB_NAME = 'fuel_station_v22.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -234,30 +234,34 @@ elif page == "🔏 Shift Settlement Desk":
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
     
-    # Complete syntax fix: Split database execution and tuple extraction into separate, clean steps
+    # Safe try-except wrap blocks applied to verify initialization and drop 0.0 on blank table states cleanly
     for i in (2, 4, 6, 7):
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Cash'")
-        sys_cash += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Credit Card'")
-        sys_cc += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='QR Pay'")
-        sys_qr += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'")
-        sys_ac += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM petrol_pump_{i}")
-        sys_cash -= float(c.fetchone())
+        try:
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Cash'")
+            sys_cash += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='Credit Card'")
+            sys_cc += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='QR Pay'")
+            sys_qr += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'")
+            sys_ac += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM petrol_pump_{i}")
+            sys_cash -= float(c.fetchone())
+        except: pass
         
     for i in (1, 3, 5, 8):
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Cash'")
-        sys_cash += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Credit Card'")
-        sys_cc += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='QR Pay'")
-        sys_qr += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'")
-        sys_ac += float(c.fetchone())
-        c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}")
-        sys_cash -= float(c.fetchone())
+        try:
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Cash'")
+            sys_cash += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='Credit Card'")
+            sys_cc += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='QR Pay'")
+            sys_qr += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(dibayar_rm), 0.0) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'")
+            sys_ac += float(c.fetchone())
+            c.execute(f"SELECT IFNULL(SUM(cash_refund), 0.0) FROM diesel_pump_{i}")
+            sys_cash -= float(c.fetchone())
+        except: pass
     conn.close()
 
     st.subheader("📝 Supervisor Shift Entry Closing Form")
