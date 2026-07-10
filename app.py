@@ -2,8 +2,7 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-# Upgraded to v17 to support shift settlement history logging tables securely
-DB_NAME = 'fuel_station_v17.db'
+DB_NAME = 'fuel_station_v18.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -19,13 +18,10 @@ def init_db():
             customer_name TEXT, original_prepaid REAL, cash_refund REAL)''')
     c.execute('CREATE TABLE IF NOT EXISTS config_prices (fuel_type TEXT, start_date TEXT, end_date TEXT, commercial_price REAL, PRIMARY KEY (fuel_type, start_date))')
     c.execute('CREATE TABLE IF NOT EXISTS account_customers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, credit_balance REAL DEFAULT 0.0, created_at TEXT)')
-    
-    # Dedicated database tracking table for Shift Settlement Closing Logs
     c.execute('''CREATE TABLE IF NOT EXISTS shift_settlements (
         id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, supervisor_name TEXT,
         sys_cash REAL, phys_cash REAL, var_cash REAL, sys_cc REAL, phys_cc REAL, var_cc REAL,
         sys_qr REAL, phys_qr REAL, var_qr REAL, sys_ac REAL, phys_ac REAL, var_ac REAL)''')
-        
     c.execute("SELECT COUNT(*) FROM config_prices")
     if c.fetchone() == 0:
         c.executemany("INSERT INTO config_prices VALUES (?,?,?,?)", [
@@ -165,7 +161,7 @@ if page == "🛒 Cashier Counter":
                 if prefix == "PET":
                     cursor.execute(f"INSERT INTO petrol_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, meter, qr_ac, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, calculated_meter, 0.0, subsidy, chosen_customer, original_prepaid, cash_refund))
                 else:
-                    cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, chosen_customer, original_prepaid, cash_refund))
+                    cursor.execute(f"INSERT INTO diesel_pump_{pump_selection} (receipt_no, timestamp, diisi_rm, dibayar_rm, harga, liter, verification_check, subsidy, customer_name, original_prepaid, cash_refund) VALUES (?,?,?,?,?,?,?,?,?)", (rcpt, now_time, diisi_rm, dibayar_rm, harga_applied, liter, v_check, subsidy, chosen_customer, original_prepaid, cash_refund))
                 conn.commit(); conn.close()
                 if payment_method == "AC (Account Customer)": deduct_customer_credit(chosen_customer, dibayar_rm)
                 
@@ -234,18 +230,20 @@ elif page == "🔏 Shift Settlement Desk":
     st.title("🔏 Shift Settlement & Counter Audit Desk")
     st.markdown("---")
     conn = sqlite3.connect(DB_NAME); sys_cash = 0.0; sys_cc = 0.0; sys_qr = 0.0; sys_ac = 0.0
+    
+    # Empty database handling fix: added safe scalar .fillna(0) fallbacks to prevent None type crashes
     for i in (2, 4, 6, 7):
-        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0])
-        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0])
-        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0])
-        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0])
-        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM petrol_pump_{i}", conn).fillna(0).iloc[0,0])
+        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM petrol_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM petrol_pump_{i}", conn).fillna(0).iloc[0,0] or 0.0)
     for i in (1, 3, 5, 8):
-        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0])
-        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0])
-        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0])
-        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0])
-        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM diesel_pump_{i}", conn).fillna(0).iloc[0,0])
+        sys_cash += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Cash'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_cc += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='Credit Card'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_qr += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='QR Pay'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_ac += float(pd.read_sql_query(f"SELECT SUM(dibayar_rm) FROM diesel_pump_{i} WHERE payment_method='AC (Account Customer)'", conn).fillna(0).iloc[0,0] or 0.0)
+        sys_cash -= float(pd.read_sql_query(f"SELECT SUM(cash_refund) FROM diesel_pump_{i}", conn).fillna(0).iloc[0,0] or 0.0)
     conn.close()
 
     st.subheader("📝 Supervisor Shift Entry Closing Form")
