@@ -2,7 +2,7 @@ import streamlit as st, sqlite3, pandas as pd
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 
-DB_NAME = 'fuel_station_v14.db'
+DB_NAME = 'fuel_station_v15.db'
 
 def init_db():
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -30,7 +30,7 @@ def get_price_for_date(f_type, d_str):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT commercial_price FROM config_prices WHERE fuel_type = ? AND ? BETWEEN start_date AND end_date", (f_type, d_str[:10]))
     res = c.fetchone(); conn.close()
-    return res[0] if res else (3.37 if f_type == 'petrol' else 3.97)
+    return res if res else (3.37 if f_type == 'petrol' else 3.97)
 
 def update_weekly_price(f_type, s_d, e_d, p):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
@@ -41,7 +41,7 @@ def get_next_receipt_number(prefix):
     conn = sqlite3.connect(DB_NAME); c = conn.cursor()
     c.execute("SELECT last_id FROM receipt_counter")
     last_id_row = c.fetchone()
-    last_id = last_id_row[0] if last_id_row else 0
+    last_id = last_id_row if last_id_row else 0
     next_id = last_id + 1
     c.execute("UPDATE receipt_counter SET last_id = ?", (next_id,))
     conn.commit(); conn.close()
@@ -52,7 +52,7 @@ def get_last_meter_reading(pump_no):
     try:
         c.execute(f"SELECT meter FROM petrol_pump_{pump_no} ORDER BY id DESC LIMIT 1")
         res = c.fetchone()
-        return res[0] if res else 0.0
+        return res if res else 0.0
     except: return 0.0
     finally: conn.close()
 
@@ -127,15 +127,14 @@ if page == "🛒 Cashier Counter":
         st.markdown("#### 👤 Active Prepaid Balance Verification")
         existing_customers = get_customers()
         if existing_customers:
-            cust_names = [r[0] for r in existing_customers]
+            cust_names = [r for r, _ in existing_customers]
             chosen_customer = st.selectbox("Select Account Customer", cust_names)
-            current_wallet_credit = next(r[1] for r in existing_customers if r[0] == chosen_customer)
+            current_wallet_credit = next(b for n, b in existing_customers if n == chosen_customer)
             if current_wallet_credit < dibayar_rm:
                 st.error(f"❌ **INSUFFICIENT STATION CREDIT!** Drivers balance is RM {current_wallet_credit:.2f}. Top up required.")
             else: st.success(f"✅ **CREDIT APPROVED:** Balance: RM {current_wallet_credit:.2f}.")
         else: st.warning("No customers registered yet.")
     
-    # Session state check to ensure the layout prints smoothly on re-renders
     if "print_trigger" not in st.session_state: st.session_state.print_trigger = None
 
     if st.button("Submit Order & Log Record", type="primary", use_container_width=True):
@@ -154,8 +153,6 @@ if page == "🛒 Cashier Counter":
                 if payment_method == "AC (Account Customer)": deduct_customer_credit(chosen_customer, dibayar_rm)
                 
                 b_prc = active_market_petrol if "Petrol" in fuel_category else active_market_diesel
-                
-                # HTML template format specifically optimized for narrow thermal printer printheads
                 receipt_html = f"""
                 <html><body style="font-family:monospace; font-size:12px; width:220px; margin:0; padding:10px;">
                 <div style="text-align:center; font-weight:bold;">========================<br>  MADANI FUEL STATION  <br>========================</div>
@@ -168,18 +165,16 @@ if page == "🛒 Cashier Counter":
                 """
                 st.session_state.print_trigger = receipt_html
                 st.success(f"✅ Transaction Logged under Ticket #{rcpt}!")
+                st.rerun()
         else: st.error("Please provide non-zero amounts.")
 
-    # Injects the print call via an invisible sandbox container layout frame
     if st.session_state.print_trigger:
         components.html(f"""
         <iframe id="print_frame" style="display:none;"></iframe>
         <script>
             var doc = document.getElementById('print_frame').contentWindow.document;
             doc.open(); doc.write(`{st.session_state.print_trigger}`); doc.close();
-            setTimeout(function() {{
-                document.getElementById('print_frame').contentWindow.print();
-            }}, 500);
+            setTimeout(function() {{ document.getElementById('print_frame').contentWindow.print(); }}, 500);
         </script>
         """, height=0)
         st.session_state.print_trigger = None
@@ -199,7 +194,7 @@ elif page == "👤 AC Customer Wallet Manager":
         st.subheader("💵 Log Advance Cash Payment (Top-Up)")
         customer_list_raw = get_customers()
         if customer_list_raw:
-            customer_list = [r[0] for r in customer_list_raw]
+            customer_list = [n for n, _ in customer_list_raw]
             target_topup = st.selectbox("Select Client Target Account", customer_list)
             topup_amt = st.number_input("Cash Payment Top-Up Received (RM)", min_value=1.0, step=10.0, format="%.2f")
             if st.form_submit_button("Confirm Payment Top-Up"):
@@ -240,16 +235,72 @@ else:
     st.markdown("---"); st.subheader("📊 Saved Price Logs Database")
     conn = sqlite3.connect(DB_NAME); df_prices = pd.read_sql_query("SELECT fuel_type, start_date, end_date, commercial_price FROM config_prices ORDER BY start_date DESC", conn); conn.close()
     if not df_prices.empty: st.dataframe(df_prices, use_container_width=True)
-    st.markdown("---"); st.subheader("📋 Historical Shift Transaction Tables Log Ledger"); col_log1, col_log2 = st.columns(2)
-    view_p_p = col_log1.selectbox("Select Petrol Pump", (2, 4, 6, 7), key="view_p_pump")
-    conn = sqlite3.connect(DB_NAME); df_p = pd.read_sql_query(f"SELECT * FROM petrol_pump_{view_p_p}", conn); conn.close()
-    if not df_p.empty:
-        col_log1.dataframe(df_p, use_container_width=True)
-        col_log1.download_button(label="📥 Download Petrol CSV", data=df_p.to_csv(index=False).encode('utf-8'), file_name=f"petrol_{view_p_p}.csv", mime='text/csv')
-    else: col_log1.info("No records recorded yet.")
-    view_d_p = col_log2.selectbox("Select Diesel Pump", (1, 3, 5, 8), key="view_d_pump")
-    conn = sqlite3.connect(DB_NAME); df_d = pd.read_sql_query(f"SELECT * FROM diesel_pump_{view_d_p}", conn); conn.close()
-    if not df_d.empty:
-        col_log2.dataframe(df_d, use_container_width=True)
-        col_log2.download_button(label="📥 Download Diesel CSV", data=df_d.to_csv(index=False).encode('utf-8'), file_name=f"diesel_{view_d_p}.csv", mime='text/csv')
-    else: col_log2.info("No records recorded yet.")
+    
+    # === NEW MASTER EXTRACTOR & DATE INTERVAL CHRONO SHIFT AUDITOR ===
+    st.markdown("---"); st.subheader("📋 Consolidated Station Pump Extract Engine")
+    
+    # 1. Date selector inputs
+    st.markdown("#### 📅 Select Log Extraction Filter Range")
+    dt_col1, dt_col2 = st.columns(2)
+    start_filter = dt_col1.date_input("Start Date Filter", pc_now.date() - timedelta(days=7))
+    end_filter = dt_col2.date_input("End Date Filter", pc_now.date())
+    
+    # Convert dates to raw safe lookup strings matching SQLite logs formats
+    s_filter_str = start_filter.strftime("%Y-%m-%d 00:00:00")
+    e_filter_str = end_filter.strftime("%Y-%m-%d 23:59:59")
+    
+    # 2. Compile Master Dataset
+    conn = sqlite3.connect(DB_NAME)
+    all_rows = []
+    
+    # Fetch across all Petrol configurations
+    for p_no in (2, 4, 6, 7):
+        try:
+            query = f"SELECT * FROM petrol_pump_{p_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'"
+            df_tmp = pd.read_sql_query(query, conn)
+            if not df_tmp.empty:
+                df_tmp['Fuel Type'] = 'Petrol'
+                df_tmp['Pump No'] = p_no
+                all_rows.append(df_tmp)
+        except: pass
+        
+    # Fetch across all Diesel configurations
+    for d_no in (1, 3, 5, 8):
+        try:
+            query = f"SELECT * FROM diesel_pump_{d_no} WHERE timestamp BETWEEN '{s_filter_str}' AND '{e_filter_str}'"
+            df_tmp = pd.read_sql_query(query, conn)
+            if not df_tmp.empty:
+                df_tmp['Fuel Type'] = 'Diesel'
+                df_tmp['Pump No'] = d_no
+                # Map Diesel columns to align layout smoothly with Petrol matrix grids
+                df_tmp = df_tmp.rename(columns={'verification_check': 'meter'})
+                df_tmp['qr_ac'] = 0.0 # Placeholder matching Petrol layout schemas
+                all_rows.append(df_tmp)
+        except: pass
+        
+    conn.close()
+    
+    if all_rows:
+        # Merge datasets together into a single master sheet
+        master_df = pd.concat(all_rows, ignore_index=True)
+        
+        # Sort sequentially: Sorted by Pump ID number ascending, then timestamp chronological order
+        master_df = master_df.sort_values(by=['Pump No', 'timestamp'], ascending=[True, True])
+        
+        # Re-arrange standard columns cleanly for export view
+        ordered_cols = ['Pump No', 'Fuel Type', 'receipt_no', 'timestamp', 'diisi_rm', 'dibayar_rm', 'harga', 'liter', 'meter', 'qr_ac', 'subsidy', 'customer_name']
+        master_df = master_df[ordered_cols]
+        
+        # Show master table preview
+        st.dataframe(master_df, use_container_width=True)
+        
+        # Download Master Excel CSV Sheet
+        st.download_button(
+            label=f"📥 Download Sorted Consolidated CSV ({start_filter.strftime('%d %b')} to {end_filter.strftime('%d %b')})",
+            data=master_df.to_csv(index=False).encode('utf-8'),
+            file_name=f"station_master_report_{start_filter}_to_{end_filter}.csv",
+            mime='text/csv',
+            use_container_width=True
+        )
+    else:
+        st.info("No sales transactions logged across any pumps within this specific date range filter block yet.")
